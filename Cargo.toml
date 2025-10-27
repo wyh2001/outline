@@ -3,6 +3,10 @@ name = "outline-core"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+default = ["cli"]
+cli = ["clap"]
+
 [lib]
 name = "outline"
 path = "src/lib.rs"
@@ -14,4 +18,9 @@ vtracer = "0.6.4"
 ndarray = "0.16.1"
 visioncortex = "0.8.8"
 imageproc = "0.25.0"
-clap = { version = "4.5.4", features = ["derive"] }
+clap = { version = "4.5.4", features = ["derive"], optional = true }
+
+[[bin]]
+name = "outline"
+path = "src/main.rs"
+required-features = ["cli"]
