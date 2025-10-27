@@ -1,7 +1,11 @@
 [package]
-name = "outline"
+name = "outline-core"
 version = "0.1.0"
 edition = "2024"
+
+[lib]
+name = "outline"
+path = "src/lib.rs"
 
 [dependencies]
 image = "0.25.8"
