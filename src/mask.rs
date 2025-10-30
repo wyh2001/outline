@@ -4,9 +4,64 @@ use image::{GrayImage, Luma};
 use imageproc::distance_transform::euclidean_squared_distance_transform;
 use imageproc::filter::gaussian_blur_f32;
 use ndarray::Array2;
+
+use crate::config::MaskProcessingOptions;
+
+#[cfg(feature = "vectorizer-vtracer")]
 use vtracer::ColorImage;
 
-/// Converts a 2D array of f32 values in [0.0, 1.0] to a grayscale image.
+/// A single transformation step applied to a grayscale mask image.
+#[derive(Debug, Clone)]
+pub enum MaskOperation {
+    Blur { sigma: f32 },
+    Threshold { value: u8 },
+    Dilate { radius: f32 },
+    FillHoles,
+}
+
+impl MaskOperation {
+    pub fn apply(&self, input: &GrayImage) -> GrayImage {
+        match self {
+            MaskOperation::Blur { sigma } => gaussian_blur_f32(input, *sigma),
+            MaskOperation::Threshold { value } => threshold_mask(input, *value),
+            MaskOperation::Dilate { radius } => dilate_euclidean(input, *radius),
+            MaskOperation::FillHoles => fill_mask_holes(input),
+        }
+    }
+}
+
+/// Run a list of operations against the provided source image, returning the transformed mask.
+pub fn apply_operations(source: &GrayImage, operations: &[MaskOperation]) -> GrayImage {
+    let mut current = source.clone();
+    for op in operations {
+        current = op.apply(&current);
+    }
+    current
+}
+
+/// Produce a standard operation sequence based on simple mask processing options.
+pub fn operations_from_options(options: &MaskProcessingOptions) -> Vec<MaskOperation> {
+    let mut operations = Vec::new();
+    if options.blur {
+        operations.push(MaskOperation::Blur {
+            sigma: options.blur_sigma,
+        });
+    }
+    operations.push(MaskOperation::Threshold {
+        value: options.mask_threshold,
+    });
+    if options.dilate {
+        operations.push(MaskOperation::Dilate {
+            radius: options.dilation_radius,
+        });
+    }
+    if options.fill_holes {
+        operations.push(MaskOperation::FillHoles);
+    }
+    operations
+}
+
+/// Convert a 2D array of f32 values in [0.0, 1.0] to a grayscale image.
 pub fn array_to_gray_image(array: &Array2<f32>) -> GrayImage {
     let h = array.shape()[0];
     let w = array.shape()[1];
@@ -21,7 +76,8 @@ pub fn array_to_gray_image(array: &Array2<f32>) -> GrayImage {
     gray
 }
 
-/// Converts a grayscale image to an RGBA color image.
+/// Convert a grayscale image to an RGBA color image.
+#[cfg(feature = "vectorizer-vtracer")]
 pub fn gray_to_color_image_rgba(
     gray: &GrayImage,
     threshold: Option<u8>,
@@ -59,13 +115,7 @@ pub fn gray_to_color_image_rgba(
     }
 }
 
-/// Applies Gaussian blur to the grayscale image and then thresholds it to produce a binary mask.
-pub fn blur_then_threshold(gray: &GrayImage, sigma: f32, thr: u8) -> GrayImage {
-    let blurred = gaussian_blur_f32(gray, sigma);
-    threshold_mask(&blurred, thr)
-}
-
-/// Thresholds the grayscale image to produce a binary mask.
+/// Threshold the grayscale image to produce a binary mask.
 pub fn threshold_mask(gray: &GrayImage, thr: u8) -> GrayImage {
     let (w, h) = gray.dimensions();
     let mut out = GrayImage::new(w, h);
@@ -94,7 +144,7 @@ pub fn dilate_euclidean(mask_bin: &GrayImage, r: f32) -> GrayImage {
     out
 }
 
-/// Fills holes in a binary mask using a flood-fill algorithm from the borders.
+/// Fill holes in a binary mask using a flood-fill algorithm from the borders.
 pub fn fill_mask_holes(mask: &GrayImage) -> GrayImage {
     let (w, h) = mask.dimensions();
     let (w_usize, h_usize) = (w as usize, h as usize);

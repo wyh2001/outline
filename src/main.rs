@@ -4,15 +4,13 @@ use std::path::{Path, PathBuf};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use image::imageops::FilterType;
 
-use outline::foreground::export_foreground;
-use outline::run_matte_pipeline;
-use outline::{
-    AlphaSource, MaskProcessingOptions, MaskSourcePreference, MattePipelineConfig, ModelOptions,
-    TraceConfig, select_alpha, select_mask, trace_to_svg_string,
-};
+use outline::{MaskHandle, MaskProcessingOptions, MatteHandle, Outline, OutlineResult};
+#[cfg(feature = "vectorizer-vtracer")]
+use outline::{TraceOptions, VtracerSvgVectorizer};
 use visioncortex::PathSimplifyMode;
-use vtracer::{ColorMode, Hierarchical, Preset};
+use vtracer::{ColorMode, Hierarchical};
 
+/// Resampling filters for image resizing.
 #[derive(Clone, Copy, Debug, ValueEnum)]
 enum ResampleFilter {
     Nearest,
@@ -23,6 +21,7 @@ enum ResampleFilter {
 }
 
 impl From<ResampleFilter> for FilterType {
+    /// Convert ResampleFilter to image::imageops::FilterType.
     fn from(value: ResampleFilter) -> Self {
         match value {
             ResampleFilter::Nearest => FilterType::Nearest,
@@ -34,23 +33,7 @@ impl From<ResampleFilter> for FilterType {
     }
 }
 
-#[derive(Clone, Copy, Debug, ValueEnum)]
-enum TracerPreset {
-    Bw,
-    Poster,
-    Photo,
-}
-
-impl From<TracerPreset> for Preset {
-    fn from(value: TracerPreset) -> Self {
-        match value {
-            TracerPreset::Bw => Preset::Bw,
-            TracerPreset::Poster => Preset::Poster,
-            TracerPreset::Photo => Preset::Photo,
-        }
-    }
-}
-
+/// Tracing color modes for SVG vectorization.
 #[derive(Clone, Copy, Debug, ValueEnum)]
 enum TracerColorMode {
     Color,
@@ -58,6 +41,7 @@ enum TracerColorMode {
 }
 
 impl From<TracerColorMode> for ColorMode {
+    /// Convert TracerColorMode to vtracer::ColorMode.
     fn from(value: TracerColorMode) -> Self {
         match value {
             TracerColorMode::Color => ColorMode::Color,
@@ -66,6 +50,7 @@ impl From<TracerColorMode> for ColorMode {
     }
 }
 
+/// Hierarchical tracing modes for SVG vectorization.
 #[derive(Clone, Copy, Debug, ValueEnum)]
 enum TracerHierarchy {
     Stacked,
@@ -73,6 +58,7 @@ enum TracerHierarchy {
 }
 
 impl From<TracerHierarchy> for Hierarchical {
+    /// Convert TracerHierarchy to vtracer::Hierarchical.
     fn from(value: TracerHierarchy) -> Self {
         match value {
             TracerHierarchy::Stacked => Hierarchical::Stacked,
@@ -81,6 +67,7 @@ impl From<TracerHierarchy> for Hierarchical {
     }
 }
 
+/// Path simplification modes for SVG vectorization.
 #[derive(Clone, Copy, Debug, ValueEnum)]
 enum TracerMode {
     None,
@@ -89,6 +76,7 @@ enum TracerMode {
 }
 
 impl From<TracerMode> for PathSimplifyMode {
+    /// Convert TracerMode to vtracer::PathSimplifyMode.
     fn from(value: TracerMode) -> Self {
         match value {
             TracerMode::None => PathSimplifyMode::None,
@@ -98,6 +86,7 @@ impl From<TracerMode> for PathSimplifyMode {
     }
 }
 
+/// Command line interface definition.
 #[derive(Parser, Debug)]
 #[command(author, version, about, propagate_version = true)]
 struct Cli {
@@ -206,16 +195,26 @@ struct MaskProcessingArgs {
     fill_holes: bool,
 }
 
+impl From<&MaskProcessingArgs> for MaskProcessingOptions {
+    fn from(args: &MaskProcessingArgs) -> Self {
+        Self {
+            blur: args.blur,
+            blur_sigma: args.blur_sigma,
+            mask_threshold: args.mask_threshold,
+            dilate: args.dilate,
+            dilation_radius: args.dilation_radius,
+            fill_holes: args.fill_holes,
+        }
+    }
+}
+
 #[derive(Args, Debug)]
 struct TraceOptionsArgs {
-    /// Tracing preset applied before overrides
-    #[arg(long = "preset", value_enum, default_value_t = TracerPreset::Bw)]
-    preset: TracerPreset,
     /// Tracing color mode
     #[arg(long = "color-mode", value_enum, default_value_t = TracerColorMode::Binary)]
     color_mode: TracerColorMode,
     /// Hierarchical tracing mode
-    #[arg(long = "hierarchy", value_enum, default_value_t = TracerHierarchy::Cutout)]
+    #[arg(long = "hierarchy", value_enum, default_value_t = TracerHierarchy::Stacked)]
     hierarchy: TracerHierarchy,
     /// Path simplification mode
     #[arg(long = "mode", value_enum, default_value_t = TracerMode::Spline)]
@@ -223,8 +222,26 @@ struct TraceOptionsArgs {
     /// Speckle filter size used by the tracer
     #[arg(long = "filter-speckle", default_value_t = 4)]
     filter_speckle: usize,
-    /// Path precision override (decimal places); set --no-path-precision to disable
-    #[arg(long = "path-precision", default_value = "8")]
+    /// Color precision override (significant bits per RGB channel)
+    #[arg(long = "color-precision", default_value_t = 6)]
+    color_precision: i32,
+    /// Layer difference / gradient step override
+    #[arg(long = "layer-difference", default_value_t = 16)]
+    layer_difference: i32,
+    /// Corner threshold override in degrees
+    #[arg(long = "corner-threshold", default_value_t = 60)]
+    corner_threshold: i32,
+    /// Segment length threshold override
+    #[arg(long = "length-threshold", default_value_t = 4.0)]
+    length_threshold: f64,
+    /// Maximum subdivision iterations override
+    #[arg(long = "max-iterations", default_value_t = 10)]
+    max_iterations: usize,
+    /// Splice threshold override in degrees
+    #[arg(long = "splice-threshold", default_value_t = 45)]
+    splice_threshold: i32,
+    /// Path precision override (decimal places)
+    #[arg(long = "path-precision")]
     path_precision: Option<u32>,
     /// Disable explicit path precision override
     #[arg(long = "no-path-precision")]
@@ -234,21 +251,14 @@ struct TraceOptionsArgs {
     invert_svg: bool,
 }
 
+/// The argument to specify which alpha source to use.
 #[derive(Clone, Copy, Debug, ValueEnum)]
 enum AlphaFromArg {
     Raw,
     Processed,
 }
 
-impl From<AlphaFromArg> for AlphaSource {
-    fn from(value: AlphaFromArg) -> Self {
-        match value {
-            AlphaFromArg::Raw => AlphaSource::Raw,
-            AlphaFromArg::Processed => AlphaSource::Processed,
-        }
-    }
-}
-
+/// The argument to specify which mask source to use.
 #[derive(Clone, Copy, Debug, ValueEnum)]
 enum MaskSourceArg {
     Raw,
@@ -256,29 +266,20 @@ enum MaskSourceArg {
     Auto,
 }
 
-impl From<MaskSourceArg> for MaskSourcePreference {
-    fn from(value: MaskSourceArg) -> Self {
-        match value {
-            MaskSourceArg::Raw => MaskSourcePreference::Raw,
-            MaskSourceArg::Processed => MaskSourcePreference::Processed,
-            MaskSourceArg::Auto => MaskSourcePreference::Auto,
-        }
-    }
-}
-
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> OutlineResult<()> {
     let cli = Cli::parse();
     match &cli.command {
-        Commands::Mask(cmd) => run_mask(&cli.global, cmd),
-        Commands::Cut(cmd) => run_cut(&cli.global, cmd),
-        Commands::Trace(cmd) => run_trace(&cli.global, cmd),
+        Commands::Mask(cmd) => handle_mask(&cli.global, cmd),
+        Commands::Cut(cmd) => handle_cut(&cli.global, cmd),
+        Commands::Trace(cmd) => handle_trace(&cli.global, cmd),
     }
 }
 
-fn run_mask(global: &GlobalOptions, cmd: &MaskCommand) -> Result<(), Box<dyn std::error::Error>> {
-    let pipeline_config = build_pipeline_config(global, &cmd.input, &cmd.mask_processing);
-    let result = run_matte_pipeline(&pipeline_config)?;
-
+/// Handle the 'mask' command.
+fn handle_mask(global: &GlobalOptions, cmd: &MaskCommand) -> OutlineResult<()> {
+    let outline = build_outline(global, &cmd.mask_processing);
+    let session = outline.for_image(&cmd.input)?;
+    let matte = session.matte();
     let default_suffix = if cmd.binary { "mask" } else { "matte" };
     let output_path = cmd
         .output
@@ -286,105 +287,130 @@ fn run_mask(global: &GlobalOptions, cmd: &MaskCommand) -> Result<(), Box<dyn std
         .unwrap_or_else(|| derive_variant_path(&cmd.input, default_suffix, "png"));
 
     if cmd.binary {
-        result.processed_mask.save(&output_path)?;
+        let mask = matte.clone().processed(None)?;
+        mask.save(&output_path)?;
         println!("Processed mask PNG saved to {}", output_path.display());
     } else {
-        result.raw_matte.save(&output_path)?;
+        matte.save(&output_path)?;
         println!("Matte PNG saved to {}", output_path.display());
     }
 
     Ok(())
 }
 
-fn run_cut(global: &GlobalOptions, cmd: &CutCommand) -> Result<(), Box<dyn std::error::Error>> {
-    let pipeline_config = build_pipeline_config(global, &cmd.input, &cmd.mask_processing);
-    let result = run_matte_pipeline(&pipeline_config)?;
-
-    if let Some(selection) = &cmd.save_mask {
-        let path = selection
-            .clone()
-            .unwrap_or_else(|| derive_variant_path(&cmd.input, "matte", "png"));
-        result.raw_matte.save(&path)?;
-        println!("Matte PNG saved to {}", path.display());
-    }
-
-    if let Some(selection) = &cmd.save_processed_mask {
-        let path = selection
-            .clone()
-            .unwrap_or_else(|| derive_variant_path(&cmd.input, "mask", "png"));
-        result.processed_mask.save(&path)?;
-        println!("Processed mask PNG saved to {}", path.display());
-    }
-
+/// Handles the 'cut' command.
+fn handle_cut(global: &GlobalOptions, cmd: &CutCommand) -> OutlineResult<()> {
+    let outline = build_outline(global, &cmd.mask_processing);
+    let session = outline.for_image(&cmd.input)?;
+    let matte = session.matte();
     let output_path = cmd
         .output
         .clone()
         .unwrap_or_else(|| derive_variant_path(&cmd.input, "foreground", "png"));
 
-    let alpha_image = select_alpha(&result, cmd.alpha_from.into());
-    export_foreground(&result.rgb_image, alpha_image, &output_path)?;
+    let save_mask_path = match &cmd.save_mask {
+        Some(Some(path)) => Some(path.clone()),
+        Some(None) => Some(derive_variant_path(&cmd.input, "matte", "png")),
+        None => None,
+    };
+
+    let save_processed_mask_path = match &cmd.save_processed_mask {
+        Some(Some(path)) => Some(path.clone()),
+        Some(None) => Some(derive_variant_path(&cmd.input, "mask", "png")),
+        None => None,
+    };
+
+    let mut processed_mask: Option<MaskHandle> = None;
+
+    let mut ensure_processed = |matte: &MatteHandle| -> OutlineResult<MaskHandle> {
+        if let Some(mask) = &processed_mask {
+            Ok(mask.clone())
+        } else {
+            let mask = matte.clone().processed(None)?;
+            processed_mask = Some(mask.clone());
+            Ok(mask)
+        }
+    };
+
+    let foreground = match cmd.alpha_from {
+        AlphaFromArg::Raw => matte.foreground()?,
+        AlphaFromArg::Processed => ensure_processed(&matte)?.foreground()?,
+    };
+
+    foreground.save(&output_path)?;
     println!("Foreground PNG saved to {}", output_path.display());
+
+    if let Some(path) = &save_mask_path {
+        matte.clone().save(path)?;
+        println!("Matte PNG saved to {}", path.display());
+    }
+
+    if let Some(path) = &save_processed_mask_path {
+        ensure_processed(&matte)?.save(path)?;
+        println!("Processed mask PNG saved to {}", path.display());
+    }
 
     Ok(())
 }
 
-fn run_trace(global: &GlobalOptions, cmd: &TraceCommand) -> Result<(), Box<dyn std::error::Error>> {
-    let pipeline_config = build_pipeline_config(global, &cmd.input, &cmd.mask_processing);
+/// Handle the 'trace' command.
+fn handle_trace(global: &GlobalOptions, cmd: &TraceCommand) -> OutlineResult<()> {
+    let outline = build_outline(global, &cmd.mask_processing);
+    let session = outline.for_image(&cmd.input)?;
+    let matte = session.matte();
     let output_path = cmd
         .output
         .clone()
         .unwrap_or_else(|| derive_svg_path(&cmd.input));
 
-    let trace_config = TraceConfig {
-        pipeline: pipeline_config,
-        svg_path: output_path.clone(),
-        mask_preference: cmd.mask_source.into(),
-        tracer_preset: cmd.trace_options.preset.into(),
-        tracer_color_mode: cmd.trace_options.color_mode.into(),
-        tracer_hierarchical: cmd.trace_options.hierarchy.into(),
-        tracer_mode: cmd.trace_options.mode.into(),
-        tracer_filter_speckle: cmd.trace_options.filter_speckle,
-        tracer_path_precision: if cmd.trace_options.no_path_precision {
-            None
-        } else {
-            cmd.trace_options.path_precision
-        },
-        invert_svg: cmd.trace_options.invert_svg,
-    };
+    let mut options = TraceOptions::default();
+    options.tracer_color_mode = cmd.trace_options.color_mode.into();
+    options.tracer_hierarchical = cmd.trace_options.hierarchy.into();
+    options.tracer_mode = cmd.trace_options.mode.into();
+    options.tracer_filter_speckle = cmd.trace_options.filter_speckle;
+    options.tracer_color_precision = cmd.trace_options.color_precision;
+    options.tracer_layer_difference = cmd.trace_options.layer_difference;
+    options.tracer_corner_threshold = cmd.trace_options.corner_threshold;
+    options.tracer_length_threshold = cmd.trace_options.length_threshold;
+    options.tracer_max_iterations = cmd.trace_options.max_iterations;
+    options.tracer_splice_threshold = cmd.trace_options.splice_threshold;
+    if let Some(path_precision) = cmd.trace_options.path_precision {
+        options.tracer_path_precision = Some(path_precision);
+    }
+    if cmd.trace_options.no_path_precision {
+        options.tracer_path_precision = None;
+    }
+    options.invert_svg = cmd.trace_options.invert_svg;
 
-    let result = run_matte_pipeline(&trace_config.pipeline)?;
-    let mask_image = select_mask(&result, trace_config.mask_preference);
-    let svg = trace_to_svg_string(mask_image, &trace_config)?;
-    fs::write(&trace_config.svg_path, svg)?;
-    println!("SVG saved to {}", trace_config.svg_path.display());
+    let vectorizer = VtracerSvgVectorizer;
+    let svg = match cmd.mask_source {
+        MaskSourceArg::Raw => matte.trace(&vectorizer, &options)?,
+        MaskSourceArg::Processed => matte
+            .clone()
+            .processed(None)?
+            .trace(&vectorizer, &options)?,
+        MaskSourceArg::Auto => matte
+            .clone()
+            .processed(None)?
+            .trace(&vectorizer, &options)?,
+    };
+    fs::write(&output_path, &svg)?;
+    println!("SVG saved to {}", output_path.display());
 
     Ok(())
 }
 
-fn build_pipeline_config(
-    global: &GlobalOptions,
-    input: &Path,
-    mask_args: &MaskProcessingArgs,
-) -> MattePipelineConfig {
-    MattePipelineConfig {
-        model: ModelOptions {
-            model_path: global.model.clone(),
-            image_path: input.to_path_buf(),
-            model_resize_filter: global.model_filter.into(),
-            matte_resize_filter: global.matte_filter.into(),
-            intra_threads: global.intra_threads,
-        },
-        mask_processing: MaskProcessingOptions {
-            blur: mask_args.blur,
-            blur_sigma: mask_args.blur_sigma,
-            mask_threshold: mask_args.mask_threshold,
-            dilate: mask_args.dilate,
-            dilation_radius: mask_args.dilation_radius,
-            fill_holes: mask_args.fill_holes,
-        },
-    }
+/// The convenience function to build an Outline with the input global and mask processing options.
+fn build_outline(global: &GlobalOptions, mask_args: &MaskProcessingArgs) -> Outline {
+    let mask_processing: MaskProcessingOptions = mask_args.into();
+    Outline::new(global.model.clone())
+        .with_input_resize_filter(global.model_filter.into())
+        .with_output_resize_filter(global.matte_filter.into())
+        .with_intra_threads(global.intra_threads)
+        .with_default_mask_processing(mask_processing)
 }
 
+/// Derive a variant file path by appending a suffix before the extension.
 fn derive_variant_path(input: &Path, suffix: &str, extension: &str) -> PathBuf {
     let mut derived = input.to_path_buf();
     let stem = input
@@ -396,6 +422,7 @@ fn derive_variant_path(input: &Path, suffix: &str, extension: &str) -> PathBuf {
     derived
 }
 
+/// Derive an SVG file path by changing the extension to `.svg`.
 fn derive_svg_path(input: &Path) -> PathBuf {
     let mut path = input.to_path_buf();
     path.set_extension("svg");

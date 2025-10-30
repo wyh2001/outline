@@ -5,7 +5,8 @@ edition = "2024"
 
 [features]
 default = ["cli"]
-cli = ["clap"]
+cli = ["clap", "vectorizer-vtracer"]
+vectorizer-vtracer = ["dep:vtracer", "dep:visioncortex"]
 
 [lib]
 name = "outline"
@@ -14,11 +15,12 @@ path = "src/lib.rs"
 [dependencies]
 image = "0.25.8"
 ort = "2.0.0-rc.10"
-vtracer = "0.6.4"
+vtracer = { version = "0.6.4", optional = true }
 ndarray = "0.16.1"
-visioncortex = "0.8.8"
+visioncortex = { version = "0.8.8", optional = true }
 imageproc = "0.25.0"
-clap = { version = "4.5.4", features = ["derive"], optional = true }
+thiserror = "2"
+clap = { version = "4", features = ["derive"], optional = true }
 
 [[bin]]
 name = "outline"
