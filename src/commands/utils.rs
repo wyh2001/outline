@@ -8,8 +8,8 @@ use crate::cli::{GlobalOptions, MaskProcessingArgs};
 pub fn build_outline(global: &GlobalOptions, mask_args: &MaskProcessingArgs) -> Outline {
     let mask_processing: MaskProcessingOptions = mask_args.into();
     Outline::new(global.model.clone())
-        .with_input_resize_filter(global.model_filter.into())
-        .with_output_resize_filter(global.matte_filter.into())
+        .with_input_resize_filter(global.input_resample_filter.into())
+        .with_output_resize_filter(global.output_resample_filter.into())
         .with_intra_threads(global.intra_threads)
         .with_default_mask_processing(mask_processing)
 }

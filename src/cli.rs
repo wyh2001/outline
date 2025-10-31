@@ -26,11 +26,11 @@ pub struct GlobalOptions {
     #[arg(long)]
     pub intra_threads: Option<usize>,
     /// Filter used when resizing the input before inference
-    #[arg(long = "model-filter", value_enum, default_value_t = ResampleFilter::Triangle)]
-    pub model_filter: ResampleFilter,
+    #[arg(long = "input-resample-filter", value_enum, default_value_t = ResampleFilter::Triangle)]
+    pub input_resample_filter: ResampleFilter,
     /// Filter used when resizing the matte back to the original resolution
-    #[arg(long = "matte-filter", value_enum, default_value_t = ResampleFilter::Lanczos3)]
-    pub matte_filter: ResampleFilter,
+    #[arg(long = "output-resample-filter", value_enum, default_value_t = ResampleFilter::Lanczos3)]
+    pub output_resample_filter: ResampleFilter,
 }
 
 #[derive(Subcommand, Debug)]
