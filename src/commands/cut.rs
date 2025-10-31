@@ -14,13 +14,13 @@ pub fn run(global: &GlobalOptions, cmd: CutCommand) -> OutlineResult<()> {
         .clone()
         .unwrap_or_else(|| derive_variant_path(&cmd.input, "foreground", "png"));
 
-    let save_mask_path = match &cmd.save_mask {
+    let save_mask_path = match &cmd.export_matte {
         Some(Some(path)) => Some(path.clone()),
         Some(None) => Some(derive_variant_path(&cmd.input, "matte", "png")),
         None => None,
     };
 
-    let save_processed_mask_path = match &cmd.save_processed_mask {
+    let save_processed_mask_path = match &cmd.export_mask {
         Some(Some(path)) => Some(path.clone()),
         Some(None) => Some(derive_variant_path(&cmd.input, "mask", "png")),
         None => None,
