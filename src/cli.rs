@@ -94,8 +94,8 @@ pub struct CutCommand {
     #[arg(long = "save-processed-mask", value_name = "PATH", num_args = 0..=1)]
     pub save_processed_mask: Option<Option<PathBuf>>,
     /// Select which mask is used for the foreground alpha channel
-    #[arg(long = "alpha-from", value_enum, default_value_t = AlphaFromArg::Raw)]
-    pub alpha_from: AlphaFromArg,
+    #[arg(long = "alpha-source", value_enum, default_value_t = AlphaFromArg::Raw)]
+    pub alpha_source: AlphaFromArg,
     #[command(flatten)]
     pub mask_processing: MaskProcessingArgs,
 }

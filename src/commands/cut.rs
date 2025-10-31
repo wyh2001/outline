@@ -38,7 +38,7 @@ pub fn run(global: &GlobalOptions, cmd: CutCommand) -> OutlineResult<()> {
         }
     };
 
-    let foreground = match cmd.alpha_from {
+    let foreground = match cmd.alpha_source {
         AlphaFromArg::Raw => matte.foreground()?,
         AlphaFromArg::Processed => ensure_processed(&matte)?.foreground()?,
     };
