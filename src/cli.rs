@@ -124,8 +124,8 @@ pub struct MaskProcessingArgs {
     /// Sigma used when gaussian blur is enabled
     #[arg(long = "blur-sigma", default_value_t = 6.0)]
     pub blur_sigma: f32,
-    /// Threshold applied to the matte (0-255)
-    #[arg(long = "mask-threshold", default_value_t = 120)]
+    /// Threshold applied to the matte (0-255 or 0.0-1.0)
+    #[arg(long = "mask-threshold", default_value_t = 120, value_parser = parse_mask_threshold)]
     pub mask_threshold: u8,
     /// Enable dilation after thresholding
     #[arg(long)]
@@ -149,6 +149,29 @@ impl From<&MaskProcessingArgs> for MaskProcessingOptions {
             fill_holes: args.fill_holes,
         }
     }
+}
+
+fn parse_mask_threshold(value: &str) -> Result<u8, String> {
+    if let Ok(int_value) = value.parse::<u8>() {
+        return Ok(int_value);
+    }
+
+    let float_value = value
+        .parse::<f32>()
+        .map_err(|_| format!("mask threshold must be numeric (0-255 or 0.0-1.0), got `{value}`"))?;
+
+    if (0.0..=1.0).contains(&float_value) {
+        let scaled = (float_value * 255.0).round() as i32;
+        return Ok(scaled.clamp(0, 255) as u8);
+    }
+
+    if float_value.fract().abs() <= f32::EPSILON && (0.0..=255.0).contains(&float_value) {
+        return Ok(float_value as u8);
+    }
+
+    Err(format!(
+        "mask threshold {value} is out of range; expected 0-255 or 0.0-1.0"
+    ))
 }
 
 /// The argument to specify which alpha source to use.
