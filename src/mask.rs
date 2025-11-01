@@ -47,9 +47,11 @@ pub fn operations_from_options(options: &MaskProcessingOptions) -> Vec<MaskOpera
             sigma: options.blur_sigma,
         });
     }
-    operations.push(MaskOperation::Threshold {
-        value: options.mask_threshold,
-    });
+    if options.binary {
+        operations.push(MaskOperation::Threshold {
+            value: options.mask_threshold,
+        });
+    }
     if options.dilate {
         operations.push(MaskOperation::Dilate {
             radius: options.dilation_radius,

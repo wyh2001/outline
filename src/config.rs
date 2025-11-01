@@ -48,6 +48,7 @@ impl InferenceSettings {
 /// Options describing how a mask should be post-processed.
 #[derive(Debug, Clone)]
 pub struct MaskProcessingOptions {
+    pub binary: bool,
     pub blur: bool,
     pub blur_sigma: f32,
     pub mask_threshold: u8,
@@ -59,6 +60,7 @@ pub struct MaskProcessingOptions {
 impl Default for MaskProcessingOptions {
     fn default() -> Self {
         Self {
+            binary: true,
             blur: false,
             blur_sigma: 6.0,
             mask_threshold: 120,

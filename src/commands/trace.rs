@@ -36,6 +36,18 @@ pub fn run(global: &GlobalOptions, cmd: TraceCommand) -> OutlineResult<()> {
     options.invert_svg = cmd.trace_options.invert_svg;
 
     let vectorizer = VtracerSvgVectorizer;
+    let requires_processed_mask = matches!(
+        cmd.mask_source,
+        MaskSourceArg::Processed | MaskSourceArg::Auto
+    );
+    if requires_processed_mask
+        && !cmd.mask_processing.binary
+        && (cmd.mask_processing.dilate.is_some() || cmd.mask_processing.fill_holes)
+    {
+        eprintln!(
+            "Warning: --no-binary disables thresholding, but dilation/fill-holes assume a hard mask; tracing output may be unexpected."
+        );
+    }
     let svg = match cmd.mask_source {
         MaskSourceArg::Raw => matte.trace(&vectorizer, &options)?,
         MaskSourceArg::Processed => matte

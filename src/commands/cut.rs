@@ -28,6 +28,17 @@ pub fn run(global: &GlobalOptions, cmd: CutCommand) -> OutlineResult<()> {
 
     let mut processed_mask: Option<MaskHandle> = None;
 
+    let needs_processed_mask =
+        matches!(cmd.alpha_source, AlphaFromArg::Processed) || cmd.export_mask.is_some();
+    if needs_processed_mask
+        && !cmd.mask_processing.binary
+        && (cmd.mask_processing.dilate.is_some() || cmd.mask_processing.fill_holes)
+    {
+        eprintln!(
+            "Warning: --no-binary disables thresholding, but dilation/fill-holes assume a hard mask; processed output may be unexpected."
+        );
+    }
+
     let mut ensure_processed = |matte: &MatteHandle| -> OutlineResult<MaskHandle> {
         if let Some(mask) = &processed_mask {
             Ok(mask.clone())
