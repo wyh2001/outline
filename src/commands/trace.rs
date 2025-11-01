@@ -8,11 +8,7 @@ use super::utils::{build_outline, derive_svg_path};
 
 /// The main function to run the trace command.
 pub fn run(global: &GlobalOptions, cmd: TraceCommand) -> OutlineResult<()> {
-    let outline = build_outline(
-        global,
-        &cmd.mask_processing,
-        MaskProcessingOptions::default(),
-    );
+    let outline = build_outline(global, &cmd.mask_processing);
     let session = outline.for_image(&cmd.input)?;
     let matte = session.matte();
     let output_path = cmd

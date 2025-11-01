@@ -6,9 +6,7 @@ use super::utils::{build_outline, derive_variant_path};
 
 /// The main function to run the cut command.
 pub fn run(global: &GlobalOptions, cmd: CutCommand) -> OutlineResult<()> {
-    let mut defaults = MaskProcessingOptions::default();
-    defaults.binary = false; // Default to no binary for cut command specifically
-    let outline = build_outline(global, &cmd.mask_processing, defaults.clone());
+    let outline = build_outline(global, &cmd.mask_processing);
     let session = outline.for_image(&cmd.input)?;
     let matte = session.matte();
     let output_path = cmd
@@ -33,7 +31,7 @@ pub fn run(global: &GlobalOptions, cmd: CutCommand) -> OutlineResult<()> {
         || cmd.mask_processing.blur.is_some()
         || cmd.mask_processing.dilate.is_some()
         || cmd.mask_processing.fill_holes
-        || cmd.mask_processing.mask_threshold != defaults.mask_threshold;
+        || cmd.mask_processing.mask_threshold != MaskProcessingOptions::default().mask_threshold;
 
     let alpha_source = match cmd.alpha_source {
         AlphaFromArg::Auto => {
