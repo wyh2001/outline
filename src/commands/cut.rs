@@ -6,7 +6,9 @@ use super::utils::{build_outline, derive_variant_path};
 
 /// The main function to run the cut command.
 pub fn run(global: &GlobalOptions, cmd: CutCommand) -> OutlineResult<()> {
-    let outline = build_outline(global, &cmd.mask_processing);
+    let mut defaults = MaskProcessingOptions::default();
+    defaults.binary = false; // Default to no binary for cut command specifically
+    let outline = build_outline(global, &cmd.mask_processing, defaults.clone());
     let session = outline.for_image(&cmd.input)?;
     let matte = session.matte();
     let output_path = cmd
@@ -27,14 +29,26 @@ pub fn run(global: &GlobalOptions, cmd: CutCommand) -> OutlineResult<()> {
     };
 
     let mut processed_mask: Option<MaskHandle> = None;
-    let processing_defaults = MaskProcessingOptions::default();
-    let binary_enabled = cmd
-        .mask_processing
-        .binary
-        .unwrap_or(processing_defaults.binary);
+    let binary_enabled = cmd.mask_processing.binary.unwrap_or(defaults.binary);
+    let processing_requested = matches!(cmd.mask_processing.binary, Some(true))
+        || cmd.mask_processing.blur.is_some()
+        || cmd.mask_processing.dilate.is_some()
+        || cmd.mask_processing.fill_holes
+        || cmd.mask_processing.mask_threshold != defaults.mask_threshold;
+
+    let alpha_source = match cmd.alpha_source {
+        AlphaFromArg::Auto => {
+            if processing_requested {
+                AlphaFromArg::Processed
+            } else {
+                AlphaFromArg::Raw
+            }
+        }
+        other => other,
+    };
 
     let needs_processed_mask =
-        matches!(cmd.alpha_source, AlphaFromArg::Processed) || cmd.export_mask.is_some();
+        matches!(alpha_source, AlphaFromArg::Processed) || cmd.export_mask.is_some();
     if needs_processed_mask
         && !binary_enabled
         && (cmd.mask_processing.dilate.is_some() || cmd.mask_processing.fill_holes)
@@ -54,9 +68,10 @@ pub fn run(global: &GlobalOptions, cmd: CutCommand) -> OutlineResult<()> {
         }
     };
 
-    let foreground = match cmd.alpha_source {
+    let foreground = match alpha_source {
         AlphaFromArg::Raw => matte.foreground()?,
         AlphaFromArg::Processed => ensure_processed(&matte)?.foreground()?,
+        AlphaFromArg::Auto => unreachable!(),
     };
 
     foreground.save(&output_path)?;

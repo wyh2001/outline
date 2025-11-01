@@ -6,7 +6,11 @@ use super::utils::{build_outline, derive_variant_path};
 
 /// The main function to run the mask command.
 pub fn run(global: &GlobalOptions, cmd: MaskCommand) -> OutlineResult<()> {
-    let outline = build_outline(global, &cmd.mask_processing);
+    let outline = build_outline(
+        global,
+        &cmd.mask_processing,
+        MaskProcessingOptions::default(),
+    );
     let session = outline.for_image(&cmd.input)?;
     let matte = session.matte();
     let defaults = MaskProcessingOptions::default();

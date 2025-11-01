@@ -94,7 +94,7 @@ pub struct CutCommand {
     #[arg(long = "export-mask", value_name = "PATH", num_args = 0..=1)]
     pub export_mask: Option<Option<PathBuf>>,
     /// Select which mask is used for the foreground alpha channel
-    #[arg(long = "alpha-source", value_enum, default_value_t = AlphaFromArg::Raw)]
+    #[arg(long = "alpha-source", value_enum, default_value_t = AlphaFromArg::Auto)]
     pub alpha_source: AlphaFromArg,
     #[command(flatten)]
     pub mask_processing: MaskProcessingArgs,
@@ -138,16 +138,21 @@ pub struct MaskProcessingArgs {
 
 impl From<&MaskProcessingArgs> for MaskProcessingOptions {
     fn from(args: &MaskProcessingArgs) -> Self {
-        let defaults = Self::default();
-        Self {
-            binary: args.binary.unwrap_or(defaults.binary),
-            blur: args.blur.is_some(),
-            blur_sigma: args.blur.unwrap_or(defaults.blur_sigma),
-            mask_threshold: args.mask_threshold,
-            dilate: args.dilate.is_some(),
-            dilation_radius: args.dilate.unwrap_or(defaults.dilation_radius),
-            fill_holes: args.fill_holes,
-        }
+        args.apply_defaults(Self::default())
+    }
+}
+
+impl MaskProcessingArgs {
+    /// Convert the parsed arguments into processing options using the provided defaults.
+    pub fn apply_defaults(&self, mut defaults: MaskProcessingOptions) -> MaskProcessingOptions {
+        defaults.binary = self.binary.unwrap_or(defaults.binary);
+        defaults.blur = self.blur.is_some();
+        defaults.blur_sigma = self.blur.unwrap_or(defaults.blur_sigma);
+        defaults.mask_threshold = self.mask_threshold;
+        defaults.dilate = self.dilate.is_some();
+        defaults.dilation_radius = self.dilate.unwrap_or(defaults.dilation_radius);
+        defaults.fill_holes = self.fill_holes;
+        defaults
     }
 }
 
@@ -186,6 +191,7 @@ fn parse_mask_threshold(value: &str) -> Result<u8, String> {
 pub enum AlphaFromArg {
     Raw,
     Processed,
+    Auto,
 }
 
 /// The argument to specify which mask source to use.
