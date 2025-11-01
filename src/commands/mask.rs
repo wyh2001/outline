@@ -1,4 +1,4 @@
-use outline::OutlineResult;
+use outline::{MaskProcessingOptions, OutlineResult};
 
 use crate::cli::{GlobalOptions, MaskCommand, MaskExportSource};
 
@@ -9,18 +9,38 @@ pub fn run(global: &GlobalOptions, cmd: MaskCommand) -> OutlineResult<()> {
     let outline = build_outline(global, &cmd.mask_processing);
     let session = outline.for_image(&cmd.input)?;
     let matte = session.matte();
-    let default_suffix = match cmd.mask_source {
+    let defaults = MaskProcessingOptions::default();
+    let binary_enabled = cmd.mask_processing.binary.unwrap_or(defaults.binary);
+    let processing_requested = matches!(cmd.mask_processing.binary, Some(true))
+        || cmd.mask_processing.blur.is_some()
+        || cmd.mask_processing.dilate.is_some()
+        || cmd.mask_processing.fill_holes
+        || cmd.mask_processing.mask_threshold != defaults.mask_threshold;
+
+    let mask_source = match cmd.mask_source {
+        MaskExportSource::Auto => {
+            if processing_requested {
+                MaskExportSource::Processed
+            } else {
+                MaskExportSource::Raw
+            }
+        }
+        other => other,
+    };
+
+    let default_suffix = match mask_source {
         MaskExportSource::Processed => "mask",
         MaskExportSource::Raw => "matte",
+        MaskExportSource::Auto => unreachable!(),
     };
     let output_path = cmd
         .output
         .clone()
         .unwrap_or_else(|| derive_variant_path(&cmd.input, default_suffix, "png"));
 
-    match cmd.mask_source {
+    match mask_source {
         MaskExportSource::Processed => {
-            if !cmd.mask_processing.binary
+            if !binary_enabled
                 && (cmd.mask_processing.dilate.is_some() || cmd.mask_processing.fill_holes)
             {
                 eprintln!(
@@ -31,6 +51,7 @@ pub fn run(global: &GlobalOptions, cmd: MaskCommand) -> OutlineResult<()> {
             mask.save(&output_path)?;
             println!("Processed mask PNG saved to {}", output_path.display());
         }
+        MaskExportSource::Auto => unreachable!(),
         MaskExportSource::Raw => {
             matte.save(&output_path)?;
             println!("Matte PNG saved to {}", output_path.display());

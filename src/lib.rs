@@ -167,7 +167,8 @@ impl MatteHandle {
 
     /// Add a hole-filling operation to the processing pipeline.
     pub fn fill_holes(mut self) -> Self {
-        self.operations.push(MaskOperation::FillHoles);
+        let threshold = self.default_mask_processing.mask_threshold;
+        self.operations.push(MaskOperation::FillHoles { threshold });
         self
     }
 
@@ -269,7 +270,8 @@ impl MaskHandle {
 
     /// Add a hole-filling operation to the processing pipeline.
     pub fn fill_holes(mut self) -> Self {
-        self.operations.push(MaskOperation::FillHoles);
+        let threshold = self.default_mask_processing.mask_threshold;
+        self.operations.push(MaskOperation::FillHoles { threshold });
         self
     }
 

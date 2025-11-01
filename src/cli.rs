@@ -74,7 +74,7 @@ pub struct MaskCommand {
     #[arg(short, long)]
     pub output: Option<PathBuf>,
     /// Select which mask to export
-    #[arg(long = "mask-source", value_enum, default_value_t = MaskExportSource::Processed)]
+    #[arg(long = "mask-source", value_enum, default_value_t = MaskExportSource::Auto)]
     pub mask_source: MaskExportSource,
     #[command(flatten)]
     pub mask_processing: MaskProcessingArgs,
@@ -125,9 +125,9 @@ pub struct MaskProcessingArgs {
     #[arg(long = "mask-threshold", default_value_t = 120, value_parser = parse_mask_threshold)]
     pub mask_threshold: u8,
     /// Apply thresholding to produce a binary mask (use --no-binary to preserve soft edges)
-    #[arg(long = "binary", action = ArgAction::SetTrue, default_value_t = true)]
-    #[arg(long = "no-binary", action = ArgAction::SetFalse)]
-    pub binary: bool,
+    #[arg(long = "binary", action = ArgAction::SetTrue)]
+    #[arg(long = "no-binary", action = ArgAction::SetFalse, visible_alias = "preserve-soft")]
+    pub binary: Option<bool>,
     /// Enable dilation after thresholding (optionally override radius)
     #[arg(long = "dilate", value_name = "RADIUS", num_args = 0..=1, default_missing_value = "5.0")]
     pub dilate: Option<f32>,
@@ -140,7 +140,7 @@ impl From<&MaskProcessingArgs> for MaskProcessingOptions {
     fn from(args: &MaskProcessingArgs) -> Self {
         let defaults = Self::default();
         Self {
-            binary: args.binary,
+            binary: args.binary.unwrap_or(defaults.binary),
             blur: args.blur.is_some(),
             blur_sigma: args.blur.unwrap_or(defaults.blur_sigma),
             mask_threshold: args.mask_threshold,
@@ -153,6 +153,7 @@ impl From<&MaskProcessingArgs> for MaskProcessingOptions {
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
 pub enum MaskExportSource {
+    Auto,
     Raw,
     Processed,
 }

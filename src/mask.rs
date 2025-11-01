@@ -16,7 +16,7 @@ pub enum MaskOperation {
     Blur { sigma: f32 },
     Threshold { value: u8 },
     Dilate { radius: f32 },
-    FillHoles,
+    FillHoles { threshold: u8 },
 }
 
 impl MaskOperation {
@@ -25,7 +25,7 @@ impl MaskOperation {
             MaskOperation::Blur { sigma } => gaussian_blur_f32(input, *sigma),
             MaskOperation::Threshold { value } => threshold_mask(input, *value),
             MaskOperation::Dilate { radius } => dilate_euclidean(input, *radius),
-            MaskOperation::FillHoles => fill_mask_holes(input),
+            MaskOperation::FillHoles { threshold } => fill_mask_holes(input, *threshold),
         }
     }
 }
@@ -58,7 +58,9 @@ pub fn operations_from_options(options: &MaskProcessingOptions) -> Vec<MaskOpera
         });
     }
     if options.fill_holes {
-        operations.push(MaskOperation::FillHoles);
+        operations.push(MaskOperation::FillHoles {
+            threshold: options.mask_threshold,
+        });
     }
     operations
 }
@@ -138,7 +140,7 @@ pub fn dilate_euclidean(mask_bin: &GrayImage, r: f32) -> GrayImage {
 }
 
 /// Fill holes in a binary mask using a flood-fill algorithm from the borders.
-pub fn fill_mask_holes(mask: &GrayImage) -> GrayImage {
+pub fn fill_mask_holes(mask: &GrayImage, threshold: u8) -> GrayImage {
     let (w, h) = mask.dimensions();
     let (w_usize, h_usize) = (w as usize, h as usize);
     let mut visited = vec![false; w_usize * h_usize];
@@ -149,19 +151,19 @@ pub fn fill_mask_holes(mask: &GrayImage) -> GrayImage {
 
     // Start flood-fill from all dark pixels at the image borders
     for x in 0..w {
-        if mask_raw[idx(x, 0)] < 128 {
+        if mask_raw[idx(x, 0)] < threshold {
             queue.push_back((x, 0));
         }
-        if mask_raw[idx(x, h - 1)] < 128 {
+        if mask_raw[idx(x, h - 1)] < threshold {
             queue.push_back((x, h - 1));
         }
     }
 
     for y in 0..h {
-        if mask_raw[idx(0, y)] < 128 {
+        if mask_raw[idx(0, y)] < threshold {
             queue.push_back((0, y));
         }
-        if mask_raw[idx(w - 1, y)] < 128 {
+        if mask_raw[idx(w - 1, y)] < threshold {
             queue.push_back((w - 1, y));
         }
     }
@@ -178,28 +180,28 @@ pub fn fill_mask_holes(mask: &GrayImage) -> GrayImage {
         if x > 0 {
             let nx = x - 1;
             let nid = idx(nx, y);
-            if !visited[nid] && mask_raw[nid] < 128 {
+            if !visited[nid] && mask_raw[nid] < threshold {
                 queue.push_back((nx, y));
             }
         }
         if x + 1 < w {
             let nx = x + 1;
             let nid = idx(nx, y);
-            if !visited[nid] && mask_raw[nid] < 128 {
+            if !visited[nid] && mask_raw[nid] < threshold {
                 queue.push_back((nx, y));
             }
         }
         if y > 0 {
             let ny = y - 1;
             let nid = idx(x, ny);
-            if !visited[nid] && mask_raw[nid] < 128 {
+            if !visited[nid] && mask_raw[nid] < threshold {
                 queue.push_back((x, ny));
             }
         }
         if y + 1 < h {
             let ny = y + 1;
             let nid = idx(x, ny);
-            if !visited[nid] && mask_raw[nid] < 128 {
+            if !visited[nid] && mask_raw[nid] < threshold {
                 queue.push_back((x, ny));
             }
         }
@@ -210,7 +212,11 @@ pub fn fill_mask_holes(mask: &GrayImage) -> GrayImage {
         let id = idx(x, y);
         let value = mask_pixel[0];
         // A pixel is part of a hole if it's dark but was not visited
-        let filled = if value >= 128 || !visited[id] { 255 } else { 0 };
+        let filled = if value >= threshold || !visited[id] {
+            255
+        } else {
+            0
+        };
         *out_pixel = Luma([filled]);
     }
 
