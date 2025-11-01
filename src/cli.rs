@@ -118,21 +118,15 @@ pub struct TraceCommand {
 
 #[derive(Args, Debug)]
 pub struct MaskProcessingArgs {
-    /// Enable gaussian blur before thresholding
-    #[arg(long)]
-    pub blur: bool,
-    /// Sigma used when gaussian blur is enabled
-    #[arg(long = "blur-sigma", default_value_t = 6.0)]
-    pub blur_sigma: f32,
+    /// Enable gaussian blur before thresholding (optionally override sigma)
+    #[arg(long = "blur", value_name = "SIGMA", num_args = 0..=1, default_missing_value = "6.0")]
+    pub blur: Option<f32>,
     /// Threshold applied to the matte (0-255 or 0.0-1.0)
     #[arg(long = "mask-threshold", default_value_t = 120, value_parser = parse_mask_threshold)]
     pub mask_threshold: u8,
-    /// Enable dilation after thresholding
-    #[arg(long)]
-    pub dilate: bool,
-    /// Dilation radius in pixels
-    #[arg(long = "dilation-radius", default_value_t = 5.0)]
-    pub dilation_radius: f32,
+    /// Enable dilation after thresholding (optionally override radius)
+    #[arg(long = "dilate", value_name = "RADIUS", num_args = 0..=1, default_missing_value = "5.0")]
+    pub dilate: Option<f32>,
     /// Fill enclosed holes in the mask before vectorization
     #[arg(long = "fill-holes")]
     pub fill_holes: bool,
@@ -140,12 +134,13 @@ pub struct MaskProcessingArgs {
 
 impl From<&MaskProcessingArgs> for MaskProcessingOptions {
     fn from(args: &MaskProcessingArgs) -> Self {
+        let defaults = Self::default();
         Self {
-            blur: args.blur,
-            blur_sigma: args.blur_sigma,
+            blur: args.blur.is_some(),
+            blur_sigma: args.blur.unwrap_or(defaults.blur_sigma),
             mask_threshold: args.mask_threshold,
-            dilate: args.dilate,
-            dilation_radius: args.dilation_radius,
+            dilate: args.dilate.is_some(),
+            dilation_radius: args.dilate.unwrap_or(defaults.dilation_radius),
             fill_holes: args.fill_holes,
         }
     }
