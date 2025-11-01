@@ -41,8 +41,7 @@ pub fn run(global: &GlobalOptions, cmd: TraceCommand) -> OutlineResult<()> {
 
     let vectorizer = VtracerSvgVectorizer;
     let defaults = MaskProcessingOptions::default();
-    let binary_enabled = cmd.mask_processing.binary.unwrap_or(defaults.binary);
-    let processing_requested = matches!(cmd.mask_processing.binary, Some(true))
+    let processing_requested = cmd.mask_processing.binary
         || cmd.mask_processing.blur.is_some()
         || cmd.mask_processing.dilate.is_some()
         || cmd.mask_processing.fill_holes
@@ -60,7 +59,7 @@ pub fn run(global: &GlobalOptions, cmd: TraceCommand) -> OutlineResult<()> {
     };
 
     if matches!(mask_source, MaskSourceArg::Processed)
-        && !binary_enabled
+        && !cmd.mask_processing.binary
         && (cmd.mask_processing.dilate.is_some() || cmd.mask_processing.fill_holes)
     {
         eprintln!(

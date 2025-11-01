@@ -60,7 +60,7 @@ pub struct MaskProcessingOptions {
 impl Default for MaskProcessingOptions {
     fn default() -> Self {
         Self {
-            binary: true,
+            binary: false,
             blur: false,
             blur_sigma: 6.0,
             mask_threshold: 120,

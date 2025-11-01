@@ -124,10 +124,12 @@ pub struct MaskProcessingArgs {
     /// Threshold applied to the matte (0-255 or 0.0-1.0)
     #[arg(long = "mask-threshold", default_value_t = 120, value_parser = parse_mask_threshold)]
     pub mask_threshold: u8,
-    /// Apply thresholding to produce a binary mask (use --no-binary to preserve soft edges)
-    #[arg(long = "binary", action = ArgAction::SetTrue)]
-    #[arg(long = "no-binary", action = ArgAction::SetFalse, visible_alias = "preserve-soft")]
-    pub binary: Option<bool>,
+    /// Apply thresholding to produce a binary mask (use --no-binary/--preserve-soft to keep soft edges)
+    #[arg(long = "binary", action = ArgAction::SetTrue, conflicts_with = "preserve-soft")]
+    pub binary: bool,
+    /// Preserve the soft matte instead of producing a binary mask
+    #[arg(long = "preserve-soft", visible_alias = "no-binary", action = ArgAction::SetTrue, conflicts_with = "binary-flag")]
+    preserve_soft: bool,
     /// Enable dilation after thresholding (optionally override radius)
     #[arg(long = "dilate", value_name = "RADIUS", num_args = 0..=1, default_missing_value = "5.0")]
     pub dilate: Option<f32>,
@@ -145,7 +147,7 @@ impl From<&MaskProcessingArgs> for MaskProcessingOptions {
 impl MaskProcessingArgs {
     /// Convert the parsed arguments into processing options using the provided defaults.
     pub fn apply_defaults(&self, mut defaults: MaskProcessingOptions) -> MaskProcessingOptions {
-        defaults.binary = self.binary.unwrap_or(defaults.binary);
+        defaults.binary = self.binary;
         defaults.blur = self.blur.is_some();
         defaults.blur_sigma = self.blur.unwrap_or(defaults.blur_sigma);
         defaults.mask_threshold = self.mask_threshold;

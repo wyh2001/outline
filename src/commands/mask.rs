@@ -14,8 +14,7 @@ pub fn run(global: &GlobalOptions, cmd: MaskCommand) -> OutlineResult<()> {
     let session = outline.for_image(&cmd.input)?;
     let matte = session.matte();
     let defaults = MaskProcessingOptions::default();
-    let binary_enabled = cmd.mask_processing.binary.unwrap_or(defaults.binary);
-    let processing_requested = matches!(cmd.mask_processing.binary, Some(true))
+    let processing_requested = cmd.mask_processing.binary
         || cmd.mask_processing.blur.is_some()
         || cmd.mask_processing.dilate.is_some()
         || cmd.mask_processing.fill_holes
@@ -44,7 +43,7 @@ pub fn run(global: &GlobalOptions, cmd: MaskCommand) -> OutlineResult<()> {
 
     match mask_source {
         MaskExportSource::Processed => {
-            if !binary_enabled
+            if !cmd.mask_processing.binary
                 && (cmd.mask_processing.dilate.is_some() || cmd.mask_processing.fill_holes)
             {
                 eprintln!(

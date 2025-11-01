@@ -29,8 +29,7 @@ pub fn run(global: &GlobalOptions, cmd: CutCommand) -> OutlineResult<()> {
     };
 
     let mut processed_mask: Option<MaskHandle> = None;
-    let binary_enabled = cmd.mask_processing.binary.unwrap_or(defaults.binary);
-    let processing_requested = matches!(cmd.mask_processing.binary, Some(true))
+    let processing_requested = cmd.mask_processing.binary
         || cmd.mask_processing.blur.is_some()
         || cmd.mask_processing.dilate.is_some()
         || cmd.mask_processing.fill_holes
@@ -50,7 +49,7 @@ pub fn run(global: &GlobalOptions, cmd: CutCommand) -> OutlineResult<()> {
     let needs_processed_mask =
         matches!(alpha_source, AlphaFromArg::Processed) || cmd.export_mask.is_some();
     if needs_processed_mask
-        && !binary_enabled
+        && !cmd.mask_processing.binary
         && (cmd.mask_processing.dilate.is_some() || cmd.mask_processing.fill_holes)
     {
         eprintln!(
