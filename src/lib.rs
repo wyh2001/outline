@@ -193,9 +193,22 @@ impl MatteHandle {
         self
     }
 
-    /// Process the raw matte with the accumulated operations and optional custom options.
-    pub fn processed(self, options: Option<&MaskProcessingOptions>) -> OutlineResult<MaskHandle> {
-        let mut ops = self.operations;
+    /// Process the raw matte with the accumulated operations and default options.
+    pub fn processed(self) -> OutlineResult<MaskHandle> {
+        self.process_with_options(None)
+    }
+
+    /// Process the raw matte with the accumulated operations and custom options.
+    pub fn processed_with(self, options: &MaskProcessingOptions) -> OutlineResult<MaskHandle> {
+        self.process_with_options(Some(options))
+    }
+
+    /// Helper function to process with options.
+    fn process_with_options(
+        mut self,
+        options: Option<&MaskProcessingOptions>,
+    ) -> OutlineResult<MaskHandle> {
+        let mut ops = std::mem::take(&mut self.operations);
         match options {
             Some(custom) => ops.extend(operations_from_options(custom)),
             None if ops.is_empty() => {
@@ -317,9 +330,22 @@ impl MaskHandle {
         self
     }
 
-    /// Process the mask with the accumulated operations and optional custom options.
-    pub fn processed(self, options: Option<&MaskProcessingOptions>) -> OutlineResult<MaskHandle> {
-        let mut ops = self.operations;
+    /// Process the mask with the accumulated operations and default options.
+    pub fn processed(self) -> OutlineResult<MaskHandle> {
+        self.process_with_options(None)
+    }
+
+    /// Process the mask with the accumulated operations and custom options.
+    pub fn processed_with(self, options: &MaskProcessingOptions) -> OutlineResult<MaskHandle> {
+        self.process_with_options(Some(options))
+    }
+
+    /// Helper function to process with options.
+    fn process_with_options(
+        mut self,
+        options: Option<&MaskProcessingOptions>,
+    ) -> OutlineResult<MaskHandle> {
+        let mut ops = std::mem::take(&mut self.operations);
         match options {
             Some(custom) => ops.extend(operations_from_options(custom)),
             None if ops.is_empty() => {

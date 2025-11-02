@@ -46,7 +46,7 @@ pub fn run(global: &GlobalOptions, cmd: MaskCommand) -> OutlineResult<()> {
                     "Warning: --no-binary disables thresholding, but dilation/fill-holes assume a hard mask; output may be unexpected."
                 );
             }
-            let mask = matte.clone().processed(None)?;
+            let mask = matte.clone().processed()?;
             mask.save(&output_path)?;
             println!("Processed mask PNG saved to {}", output_path.display());
         }

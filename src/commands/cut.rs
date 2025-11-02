@@ -59,7 +59,7 @@ pub fn run(global: &GlobalOptions, cmd: CutCommand) -> OutlineResult<()> {
         if let Some(mask) = &processed_mask {
             Ok(mask.clone())
         } else {
-            let mask = matte.clone().processed(None)?;
+            let mask = matte.clone().processed()?;
             processed_mask = Some(mask.clone());
             Ok(mask)
         }

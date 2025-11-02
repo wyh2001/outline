@@ -65,10 +65,7 @@ pub fn run(global: &GlobalOptions, cmd: TraceCommand) -> OutlineResult<()> {
 
     let svg = match mask_source {
         MaskSourceArg::Raw => matte.trace(&vectorizer, &options)?,
-        MaskSourceArg::Processed => matte
-            .clone()
-            .processed(None)?
-            .trace(&vectorizer, &options)?,
+        MaskSourceArg::Processed => matte.clone().processed()?.trace(&vectorizer, &options)?,
         MaskSourceArg::Auto => unreachable!(),
     };
     fs::write(&output_path, &svg)?;
