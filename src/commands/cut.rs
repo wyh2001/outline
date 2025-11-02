@@ -1,6 +1,6 @@
 use outline::{MaskHandle, MaskProcessingOptions, MatteHandle, OutlineResult};
 
-use crate::cli::{AlphaFromArg, CutCommand, GlobalOptions};
+use crate::cli::{AlphaFromArg, BinaryOption, CutCommand, GlobalOptions};
 
 use super::utils::{build_outline, derive_variant_path};
 
@@ -27,7 +27,7 @@ pub fn run(global: &GlobalOptions, cmd: CutCommand) -> OutlineResult<()> {
     };
 
     let mut processed_mask: Option<MaskHandle> = None;
-    let processing_requested = cmd.mask_processing.binary
+    let processing_requested = cmd.mask_processing.binary == BinaryOption::Enabled
         || cmd.mask_processing.blur.is_some()
         || cmd.mask_processing.dilate.is_some()
         || cmd.mask_processing.fill_holes
@@ -47,7 +47,7 @@ pub fn run(global: &GlobalOptions, cmd: CutCommand) -> OutlineResult<()> {
     let needs_processed_mask =
         matches!(alpha_source, AlphaFromArg::Processed) || cmd.export_mask.is_some();
     if needs_processed_mask
-        && !cmd.mask_processing.binary
+        && cmd.mask_processing.binary == BinaryOption::Disabled
         && (cmd.mask_processing.dilate.is_some() || cmd.mask_processing.fill_holes)
     {
         eprintln!(

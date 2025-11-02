@@ -1,6 +1,6 @@
 use outline::{MaskProcessingOptions, OutlineResult};
 
-use crate::cli::{GlobalOptions, MaskCommand, MaskExportSource};
+use crate::cli::{BinaryOption, GlobalOptions, MaskCommand, MaskExportSource};
 
 use super::utils::{build_outline, derive_variant_path};
 
@@ -10,7 +10,7 @@ pub fn run(global: &GlobalOptions, cmd: MaskCommand) -> OutlineResult<()> {
     let session = outline.for_image(&cmd.input)?;
     let matte = session.matte();
     let defaults = MaskProcessingOptions::default();
-    let processing_requested = cmd.mask_processing.binary
+    let processing_requested = cmd.mask_processing.binary == BinaryOption::Enabled
         || cmd.mask_processing.blur.is_some()
         || cmd.mask_processing.dilate.is_some()
         || cmd.mask_processing.fill_holes
@@ -39,7 +39,7 @@ pub fn run(global: &GlobalOptions, cmd: MaskCommand) -> OutlineResult<()> {
 
     match mask_source {
         MaskExportSource::Processed => {
-            if !cmd.mask_processing.binary
+            if cmd.mask_processing.binary == BinaryOption::Disabled
                 && (cmd.mask_processing.dilate.is_some() || cmd.mask_processing.fill_holes)
             {
                 eprintln!(

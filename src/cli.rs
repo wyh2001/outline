@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use clap::{ArgAction, Args, Parser, Subcommand, ValueEnum};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use image::imageops::FilterType;
 use outline::MaskProcessingOptions;
 use visioncortex::PathSimplifyMode;
@@ -124,13 +124,15 @@ pub struct MaskProcessingArgs {
     /// Threshold applied to the matte (0-255 or 0.0-1.0)
     #[arg(long = "mask-threshold", default_value_t = 120, value_parser = parse_mask_threshold)]
     pub mask_threshold: u8,
-    /// Apply thresholding to produce a binary mask (use --no-binary/--preserve-soft to keep soft edges)
-    #[arg(long = "binary", action = ArgAction::SetTrue, conflicts_with = "preserve-soft")]
-    pub binary: bool,
-    /// Preserve the soft matte instead of producing a binary mask
-    #[arg(long = "preserve-soft", visible_alias = "no-binary", action = ArgAction::SetTrue, conflicts_with = "binary-flag")]
-    preserve_soft: bool,
-    /// Enable dilation after thresholding (optionally override radius)
+    /// Apply thresholding to produce a binary mask (use `--binary enabled|disabled|auto` to choose behaviour)
+    #[arg(
+        long = "binary",
+        value_enum,
+        default_value_t = BinaryOption::Auto,
+        num_args = 0..=1,
+        default_missing_value = "enabled"
+    )]
+    pub binary: BinaryOption,
     #[arg(long = "dilate", value_name = "RADIUS", num_args = 0..=1, default_missing_value = "5.0")]
     pub dilate: Option<f32>,
     /// Fill enclosed holes in the mask before vectorization
@@ -140,21 +142,18 @@ pub struct MaskProcessingArgs {
 
 impl From<&MaskProcessingArgs> for MaskProcessingOptions {
     fn from(args: &MaskProcessingArgs) -> Self {
-        args.apply_defaults(Self::default())
-    }
-}
-
-impl MaskProcessingArgs {
-    /// Convert the parsed arguments into processing options using the provided defaults.
-    pub fn apply_defaults(&self, mut defaults: MaskProcessingOptions) -> MaskProcessingOptions {
-        defaults.binary = self.binary;
-        defaults.blur = self.blur.is_some();
-        defaults.blur_sigma = self.blur.unwrap_or(defaults.blur_sigma);
-        defaults.mask_threshold = self.mask_threshold;
-        defaults.dilate = self.dilate.is_some();
-        defaults.dilation_radius = self.dilate.unwrap_or(defaults.dilation_radius);
-        defaults.fill_holes = self.fill_holes;
-        defaults
+        let defaults = MaskProcessingOptions::default();
+        Self {
+            binary: (args.binary == BinaryOption::Auto
+                && (args.dilate.is_some() || args.fill_holes))
+                || args.binary == BinaryOption::Enabled,
+            blur: args.blur.is_some(),
+            blur_sigma: args.blur.unwrap_or(defaults.blur_sigma),
+            mask_threshold: args.mask_threshold,
+            dilate: args.dilate.is_some(),
+            dilation_radius: args.dilate.unwrap_or(defaults.dilation_radius),
+            fill_holes: args.fill_holes,
+        }
     }
 }
 
@@ -186,6 +185,14 @@ fn parse_mask_threshold(value: &str) -> Result<u8, String> {
     Err(format!(
         "mask threshold {value} is out of range; expected 0-255 or 0.0-1.0"
     ))
+}
+
+/// The argument to specify if binary mask processing is enabled.
+#[derive(Clone, Copy, Debug, ValueEnum, PartialEq, Eq)]
+pub enum BinaryOption {
+    Enabled,
+    Disabled,
+    Auto,
 }
 
 /// The argument to specify which alpha source to use.

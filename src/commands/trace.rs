@@ -2,7 +2,7 @@ use std::fs;
 
 use outline::{MaskProcessingOptions, OutlineResult, TraceOptions, VtracerSvgVectorizer};
 
-use crate::cli::{GlobalOptions, MaskSourceArg, TraceCommand};
+use crate::cli::{BinaryOption, GlobalOptions, MaskSourceArg, TraceCommand};
 
 use super::utils::{build_outline, derive_svg_path};
 
@@ -37,7 +37,7 @@ pub fn run(global: &GlobalOptions, cmd: TraceCommand) -> OutlineResult<()> {
 
     let vectorizer = VtracerSvgVectorizer;
     let defaults = MaskProcessingOptions::default();
-    let processing_requested = cmd.mask_processing.binary
+    let processing_requested = cmd.mask_processing.binary == BinaryOption::Enabled
         || cmd.mask_processing.blur.is_some()
         || cmd.mask_processing.dilate.is_some()
         || cmd.mask_processing.fill_holes
@@ -55,7 +55,7 @@ pub fn run(global: &GlobalOptions, cmd: TraceCommand) -> OutlineResult<()> {
     };
 
     if matches!(mask_source, MaskSourceArg::Processed)
-        && !cmd.mask_processing.binary
+        && cmd.mask_processing.binary == BinaryOption::Disabled
         && (cmd.mask_processing.dilate.is_some() || cmd.mask_processing.fill_holes)
     {
         eprintln!(
