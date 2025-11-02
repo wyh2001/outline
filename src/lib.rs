@@ -147,20 +147,41 @@ impl MatteHandle {
         Ok(())
     }
 
-    /// Add a blur operation to the processing pipeline.
-    pub fn blur(mut self, sigma: f32) -> Self {
+    /// Add a blur operation using the default sigma.
+    pub fn blur(mut self) -> Self {
+        let sigma = self.default_mask_processing.blur_sigma;
         self.operations.push(MaskOperation::Blur { sigma });
         self
     }
 
-    /// Add a threshold operation to the processing pipeline.
-    pub fn threshold(mut self, value: u8) -> Self {
+    /// Add a blur operation with a custom sigma.
+    pub fn blur_with(mut self, sigma: f32) -> Self {
+        self.operations.push(MaskOperation::Blur { sigma });
+        self
+    }
+
+    /// Add a threshold operation using the default mask threshold.
+    pub fn threshold(mut self) -> Self {
+        let value = self.default_mask_processing.mask_threshold;
         self.operations.push(MaskOperation::Threshold { value });
         self
     }
 
-    /// Add a dilation operation to the processing pipeline.
-    pub fn dilate(mut self, radius: f32) -> Self {
+    /// Add a threshold operation with a custom value.
+    pub fn threshold_with(mut self, value: u8) -> Self {
+        self.operations.push(MaskOperation::Threshold { value });
+        self
+    }
+
+    /// Add a dilation operation using the default radius.
+    pub fn dilate(mut self) -> Self {
+        let radius = self.default_mask_processing.dilation_radius;
+        self.operations.push(MaskOperation::Dilate { radius });
+        self
+    }
+
+    /// Add a dilation operation with a custom radius.
+    pub fn dilate_with(mut self, radius: f32) -> Self {
         self.operations.push(MaskOperation::Dilate { radius });
         self
     }
@@ -250,20 +271,41 @@ impl MaskHandle {
         Ok(())
     }
 
-    /// Add a blur operation to the processing pipeline.
-    pub fn blur(mut self, sigma: f32) -> Self {
+    /// Add a blur operation using the default sigma.
+    pub fn blur(mut self) -> Self {
+        let sigma = self.default_mask_processing.blur_sigma;
         self.operations.push(MaskOperation::Blur { sigma });
         self
     }
 
-    /// Add a threshold operation to the processing pipeline.
-    pub fn threshold(mut self, value: u8) -> Self {
+    /// Add a blur operation with a custom sigma.
+    pub fn blur_with(mut self, sigma: f32) -> Self {
+        self.operations.push(MaskOperation::Blur { sigma });
+        self
+    }
+
+    /// Add a threshold operation using the default mask threshold.
+    pub fn threshold(mut self) -> Self {
+        let value = self.default_mask_processing.mask_threshold;
         self.operations.push(MaskOperation::Threshold { value });
         self
     }
 
-    /// Add a dilation operation to the processing pipeline.
-    pub fn dilate(mut self, radius: f32) -> Self {
+    /// Add a threshold operation with a custom value.
+    pub fn threshold_with(mut self, value: u8) -> Self {
+        self.operations.push(MaskOperation::Threshold { value });
+        self
+    }
+
+    /// Add a dilation operation using the default radius.
+    pub fn dilate(mut self) -> Self {
+        let radius = self.default_mask_processing.dilation_radius;
+        self.operations.push(MaskOperation::Dilate { radius });
+        self
+    }
+
+    /// Add a dilation operation with a custom radius.
+    pub fn dilate_with(mut self, radius: f32) -> Self {
         self.operations.push(MaskOperation::Dilate { radius });
         self
     }
