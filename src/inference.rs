@@ -1,11 +1,17 @@
 use std::convert::TryFrom;
 use std::io;
+use std::path::Path;
 
 use image::imageops::FilterType;
-use image::{ImageBuffer, Luma, RgbImage};
+use image::{GrayImage, ImageBuffer, ImageReader, Luma, RgbImage};
 use ndarray::{Array2, Array4, ArrayViewD, Axis, Ix2};
 use ort::session::Session;
+use ort::session::builder::GraphOptimizationLevel;
 use ort::value::Tensor;
+
+use crate::config::InferenceSettings;
+use crate::error::OutlineResult;
+use crate::mask::array_to_gray_image;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChannelLayout {
@@ -26,11 +32,12 @@ pub const DEFAULT_MODEL_INPUT_SPEC: ModelInputSpec = ModelInputSpec {
     layout: ChannelLayout::Nchw,
 };
 
-/// Tries to figure out the model input spec from the session and falls back to the default.
+/// Try to figure out the model input spec from the session and falls back to the default.
 pub fn determine_model_input_spec(session: &Session) -> ModelInputSpec {
     infer_model_input_spec(session).unwrap_or(DEFAULT_MODEL_INPUT_SPEC)
 }
 
+/// Infer the model input spec from the ONNX session input tensor shape.
 fn infer_model_input_spec(session: &Session) -> Option<ModelInputSpec> {
     let input = session.inputs.get(0)?;
     let shape = input.input_type.tensor_shape()?;
@@ -48,7 +55,7 @@ fn infer_model_input_spec(session: &Session) -> Option<ModelInputSpec> {
     None
 }
 
-/// Checks for an NCHW layout and returns a matching spec when dimensions line up.
+/// Check for an NCHW layout and returns a matching spec when dimensions line up.
 fn infer_nchw_spec(dims: &[i64]) -> Option<ModelInputSpec> {
     let channels = *dims.get(1)?;
     if channels != 3 && channels != -1 {
@@ -65,7 +72,7 @@ fn infer_nchw_spec(dims: &[i64]) -> Option<ModelInputSpec> {
     })
 }
 
-/// Checks for an NHWC layout and returns a matching spec when dimensions line up.
+/// Check for an NHWC layout and returns a matching spec when dimensions line up.
 fn infer_nhwc_spec(dims: &[i64]) -> Option<ModelInputSpec> {
     let channels = *dims.get(3)?;
     if channels != 3 && channels != -1 {
@@ -82,7 +89,7 @@ fn infer_nhwc_spec(dims: &[i64]) -> Option<ModelInputSpec> {
     })
 }
 
-/// Converts a positive i64 dimension to usize, returning None for non-positive or overflow.
+/// Convert a positive i64 dimension to usize, returning None for non-positive or overflow.
 fn positive_dim_to_usize(dim: i64) -> Option<usize> {
     if dim > 0 {
         usize::try_from(dim).ok()
@@ -91,12 +98,12 @@ fn positive_dim_to_usize(dim: i64) -> Option<usize> {
     }
 }
 
-/// Resizes and normalizes the RGB image into a tensor that matches the model spec.
+/// Resize and normalizes the RGB image into a tensor that matches the model spec.
 pub fn preprocess_image_to_tensor(
     rgb: &RgbImage,
     filter: FilterType,
     spec: ModelInputSpec,
-) -> Result<Tensor<f32>, Box<dyn std::error::Error>> {
+) -> OutlineResult<Tensor<f32>> {
     let target_w = u32::try_from(spec.width).map_err(|_| {
         io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -120,33 +127,28 @@ pub fn preprocess_image_to_tensor(
     let (shape, data) = match spec.layout {
         ChannelLayout::Nchw => {
             let mut buffer = vec![0f32; 3 * h * w];
-            for y in 0..h {
-                for x in 0..w {
-                    let pixel = resized.get_pixel(x as u32, y as u32);
-                    let r = f32::from(pixel[0]) * inv255;
-                    let g = f32::from(pixel[1]) * inv255;
-                    let b = f32::from(pixel[2]) * inv255;
-                    let idx = y * w + x;
-                    buffer[idx] = (r - mean[0]) / std[0];
-                    buffer[h * w + idx] = (g - mean[1]) / std[1];
-                    buffer[2 * h * w + idx] = (b - mean[2]) / std[2];
-                }
+            let (r_plane, rest) = buffer.split_at_mut(h * w);
+            let (g_plane, b_plane) = rest.split_at_mut(h * w);
+
+            for (idx, pixel) in resized.pixels().enumerate() {
+                let r = f32::from(pixel[0]) * inv255;
+                let g = f32::from(pixel[1]) * inv255;
+                let b = f32::from(pixel[2]) * inv255;
+                r_plane[idx] = (r - mean[0]) / std[0];
+                g_plane[idx] = (g - mean[1]) / std[1];
+                b_plane[idx] = (b - mean[2]) / std[2];
             }
             ((1usize, 3usize, h, w), buffer)
         }
         ChannelLayout::Nhwc => {
-            let mut buffer = vec![0f32; h * w * 3];
-            for y in 0..h {
-                for x in 0..w {
-                    let pixel = resized.get_pixel(x as u32, y as u32);
-                    let r = f32::from(pixel[0]) * inv255;
-                    let g = f32::from(pixel[1]) * inv255;
-                    let b = f32::from(pixel[2]) * inv255;
-                    let idx = (y * w + x) * 3;
-                    buffer[idx] = (r - mean[0]) / std[0];
-                    buffer[idx + 1] = (g - mean[1]) / std[1];
-                    buffer[idx + 2] = (b - mean[2]) / std[2];
-                }
+            let mut buffer = Vec::with_capacity(h * w * 3);
+            for pixel in resized.pixels() {
+                let r = f32::from(pixel[0]) * inv255;
+                let g = f32::from(pixel[1]) * inv255;
+                let b = f32::from(pixel[2]) * inv255;
+                buffer.push((r - mean[0]) / std[0]);
+                buffer.push((g - mean[1]) / std[1]);
+                buffer.push((b - mean[2]) / std[2]);
             }
             ((1usize, h, w, 3usize), buffer)
         }
@@ -157,7 +159,7 @@ pub fn preprocess_image_to_tensor(
 }
 
 /// Remove singleton axes to get the raw H×W matte from the model output.
-pub fn extract_matte_hw(matte: ArrayViewD<f32>) -> Result<Array2<f32>, Box<dyn std::error::Error>> {
+pub fn extract_matte_hw(matte: ArrayViewD<f32>) -> OutlineResult<Array2<f32>> {
     let original_shape: Vec<usize> = matte.shape().to_vec();
     let mut view = matte;
 
@@ -177,13 +179,13 @@ pub fn extract_matte_hw(matte: ArrayViewD<f32>) -> Result<Array2<f32>, Box<dyn s
     Ok(view.into_dimensionality::<Ix2>()?.to_owned())
 }
 
-/// Resamples the matte to the requested width and height with the chosen filter.
+/// Resample the matte to the requested width and height with the chosen filter.
 pub fn resize_matte(
     matte: &Array2<f32>,
     target_w: u32,
     target_h: u32,
     filter: FilterType,
-) -> Result<Array2<f32>, Box<dyn std::error::Error>> {
+) -> OutlineResult<Array2<f32>> {
     let src_w = matte.shape()[1] as u32;
     let src_h = matte.shape()[0] as u32;
     let mut buffer = ImageBuffer::<Luma<f32>, Vec<f32>>::new(src_w, src_h);
@@ -198,4 +200,32 @@ pub fn resize_matte(
         out[[y as usize, x as usize]] = pixel[0];
     }
     Ok(out)
+}
+
+/// Run the full matte inference pipeline and return the RGB image and raw matte.
+pub fn run_matte_pipeline(
+    settings: &InferenceSettings,
+    image_path: &Path,
+) -> OutlineResult<(RgbImage, GrayImage)> {
+    let mut builder =
+        Session::builder()?.with_optimization_level(GraphOptimizationLevel::Level3)?;
+    if let Some(n) = settings.intra_threads {
+        builder = builder.with_intra_threads(n)?;
+    }
+    let mut session = builder.commit_from_file(&settings.model_path)?;
+
+    let rgb_input = ImageReader::open(image_path)?.decode()?.to_rgb8();
+    let orig_w = rgb_input.width();
+    let orig_h = rgb_input.height();
+
+    let input_spec = determine_model_input_spec(&session);
+    let input_tensor =
+        preprocess_image_to_tensor(&rgb_input, settings.input_resize_filter, input_spec)?;
+    let outputs = session.run(ort::inputs![input_tensor])?;
+    let matte = outputs[0].try_extract_array::<f32>()?;
+    let matte_hw = extract_matte_hw(matte)?;
+    let matte_orig = resize_matte(&matte_hw, orig_w, orig_h, settings.output_resize_filter)?;
+    let raw_matte = array_to_gray_image(&matte_orig);
+
+    Ok((rgb_input, raw_matte))
 }

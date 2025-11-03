@@ -1,106 +1,400 @@
 pub mod config;
+pub mod error;
 pub mod foreground;
 pub mod inference;
 pub mod mask;
-pub mod tracing;
+pub mod vectorizer;
 
-pub use config::{
-    AlphaSource, CutConfig, MaskCommandConfig, MaskOutputKind, MaskProcessingOptions,
-    MaskSourcePreference, MattePipelineConfig, ModelOptions, TraceConfig,
-};
+pub use config::{InferenceSettings, MaskProcessingOptions};
+pub use error::{OutlineError, OutlineResult};
+pub use vectorizer::MaskVectorizer;
+#[cfg(feature = "vectorizer-vtracer")]
+pub use vectorizer::vtracer::{TraceOptions, VtracerSvgVectorizer, trace_to_svg_string};
 
-use image::{GrayImage, ImageReader, RgbImage};
-use ort::session::Session;
-use ort::session::builder::GraphOptimizationLevel;
+use std::path::Path;
+use std::path::PathBuf;
+use std::sync::Arc;
 
-use crate::inference::{
-    determine_model_input_spec, extract_matte_hw, preprocess_image_to_tensor, resize_matte,
-};
-use crate::mask::{
-    array_to_gray_image, blur_then_threshold, dilate_euclidean, fill_mask_holes,
-    gray_to_color_image_rgba, threshold_mask,
-};
-use crate::tracing::trace;
+use image::imageops::FilterType;
+use image::{GrayImage, RgbImage, RgbaImage};
 
-#[derive(Debug)]
-pub struct MattePipelineResult {
-    pub rgb_image: RgbImage,
-    pub raw_matte: GrayImage,
-    pub processed_mask: GrayImage,
+use crate::foreground::compose_foreground;
+use crate::inference::run_matte_pipeline;
+use crate::mask::{MaskOperation, apply_operations, operations_from_options};
+
+/// Entry point for configuring and running matte extraction.
+#[derive(Debug, Clone)]
+pub struct Outline {
+    /// Inference settings for model and image handling.
+    settings: InferenceSettings,
+    /// If nothing is specified and processing is requested, these options will be used.
+    default_mask_processing: MaskProcessingOptions,
 }
 
-pub fn run_matte_pipeline(
-    config: &MattePipelineConfig,
-) -> Result<MattePipelineResult, Box<dyn std::error::Error>> {
-    let mut builder =
-        Session::builder()?.with_optimization_level(GraphOptimizationLevel::Level3)?;
-    if let Some(n) = config.model.intra_threads {
-        builder = builder.with_intra_threads(n)?;
-    }
-    let mut session = builder.commit_from_file(&config.model.model_path)?;
-
-    let rgb_input = ImageReader::open(&config.model.image_path)?
-        .decode()?
-        .to_rgb8();
-    let orig_w = rgb_input.width();
-    let orig_h = rgb_input.height();
-
-    let input_spec = determine_model_input_spec(&session);
-    let input_tensor =
-        preprocess_image_to_tensor(&rgb_input, config.model.model_resize_filter, input_spec)?;
-    let outputs = session.run(ort::inputs![input_tensor])?;
-    let matte = outputs[0].try_extract_array::<f32>()?;
-    let matte_hw = extract_matte_hw(matte)?;
-    let matte_orig = resize_matte(&matte_hw, orig_w, orig_h, config.model.matte_resize_filter)?;
-    let raw_matte = array_to_gray_image(&matte_orig);
-
-    let mut processed_mask = if config.mask_processing.blur {
-        blur_then_threshold(
-            &raw_matte,
-            config.mask_processing.blur_sigma,
-            config.mask_processing.mask_threshold,
-        )
-    } else {
-        threshold_mask(&raw_matte, config.mask_processing.mask_threshold)
-    };
-
-    if config.mask_processing.dilate {
-        processed_mask = dilate_euclidean(&processed_mask, config.mask_processing.dilation_radius);
+impl Outline {
+    pub fn new(model_path: impl Into<PathBuf>) -> Self {
+        Self {
+            settings: InferenceSettings::new(model_path),
+            default_mask_processing: MaskProcessingOptions::default(),
+        }
     }
 
-    if config.mask_processing.fill_holes {
-        processed_mask = fill_mask_holes(&processed_mask);
+    /// Set the filter used to resize the input image for the model.
+    pub fn with_input_resize_filter(mut self, filter: FilterType) -> Self {
+        self.settings.input_resize_filter = filter;
+        self
     }
 
-    Ok(MattePipelineResult {
-        rgb_image: rgb_input,
-        raw_matte,
-        processed_mask,
-    })
-}
+    /// Set the filter used to resize the output matte to the original image size.
+    pub fn with_output_resize_filter(mut self, filter: FilterType) -> Self {
+        self.settings.output_resize_filter = filter;
+        self
+    }
 
-pub fn select_mask<'a>(
-    result: &'a MattePipelineResult,
-    preference: MaskSourcePreference,
-) -> &'a GrayImage {
-    match preference {
-        MaskSourcePreference::Raw => &result.raw_matte,
-        MaskSourcePreference::Processed | MaskSourcePreference::Auto => &result.processed_mask,
+    /// Set the number of intra-op threads for the inference.
+    pub fn with_intra_threads(mut self, intra_threads: Option<usize>) -> Self {
+        self.settings.intra_threads = intra_threads;
+        self
+    }
+
+    /// Set the default mask processing options to use when none are specified.
+    pub fn with_default_mask_processing(mut self, options: MaskProcessingOptions) -> Self {
+        self.default_mask_processing = options;
+        self
+    }
+
+    /// Get a reference to the default mask processing options.
+    pub fn default_mask_processing(&self) -> &MaskProcessingOptions {
+        &self.default_mask_processing
+    }
+
+    /// Run the inference pipeline for a single image, returning the orginal image, raw matte, and processing options,
+    /// wrapped in an `InferencedMatte`.
+    pub fn for_image(&self, image_path: impl AsRef<Path>) -> OutlineResult<InferencedMatte> {
+        let (rgb, matte) = run_matte_pipeline(&self.settings, image_path.as_ref())?;
+        Ok(InferencedMatte::new(
+            rgb,
+            matte,
+            self.default_mask_processing.clone(),
+        ))
     }
 }
 
-pub fn select_alpha<'a>(result: &'a MattePipelineResult, source: AlphaSource) -> &'a GrayImage {
-    match source {
-        AlphaSource::Raw => &result.raw_matte,
-        AlphaSource::Processed => &result.processed_mask,
+/// Result of running the model for a single image, from which all artefacts can be derived.
+#[derive(Debug, Clone)]
+pub struct InferencedMatte {
+    rgb_image: Arc<RgbImage>,
+    raw_matte: Arc<GrayImage>,
+    default_mask_processing: MaskProcessingOptions,
+}
+
+impl InferencedMatte {
+    fn new(
+        rgb_image: RgbImage,
+        raw_matte: GrayImage,
+        default_mask_processing: MaskProcessingOptions,
+    ) -> Self {
+        Self {
+            rgb_image: Arc::new(rgb_image),
+            raw_matte: Arc::new(raw_matte),
+            default_mask_processing,
+        }
+    }
+
+    /// Get a reference to the original RGB image.
+    pub fn rgb_image(&self) -> &RgbImage {
+        self.rgb_image.as_ref()
+    }
+
+    /// Get a reference to the raw grayscale matte.
+    pub fn raw_matte(&self) -> &GrayImage {
+        self.raw_matte.as_ref()
+    }
+
+    pub fn matte(&self) -> MatteHandle {
+        MatteHandle {
+            rgb_image: Arc::clone(&self.rgb_image),
+            raw_matte: Arc::clone(&self.raw_matte),
+            default_mask_processing: self.default_mask_processing.clone(),
+            operations: Vec::new(),
+        }
     }
 }
 
-pub fn trace_to_svg_string(
-    mask_image: &GrayImage,
-    trace_config: &TraceConfig,
-) -> Result<String, Box<dyn std::error::Error>> {
-    let color_img = gray_to_color_image_rgba(mask_image, None, trace_config.invert_svg);
-    let svg = trace(color_img, trace_config)?;
-    Ok(svg.to_string())
+/// Builder-style handle for operating on the raw matte produced by the model.
+#[derive(Debug, Clone)]
+pub struct MatteHandle {
+    rgb_image: Arc<RgbImage>,
+    raw_matte: Arc<GrayImage>,
+    default_mask_processing: MaskProcessingOptions,
+    operations: Vec<MaskOperation>,
+}
+
+impl MatteHandle {
+    /// Get the raw grayscale matte.
+    pub fn raw(&self) -> GrayImage {
+        (*self.raw_matte).clone()
+    }
+
+    /// Consume the handle and return the raw grayscale matte.
+    pub fn into_image(self) -> GrayImage {
+        (*self.raw_matte).clone()
+    }
+
+    /// Save the raw grayscale matte to the specified path.
+    pub fn save(&self, path: impl AsRef<Path>) -> OutlineResult<()> {
+        self.raw_matte.as_ref().save(path)?;
+        Ok(())
+    }
+
+    /// Add a blur operation using the default sigma.
+    pub fn blur(mut self) -> Self {
+        let sigma = self.default_mask_processing.blur_sigma;
+        self.operations.push(MaskOperation::Blur { sigma });
+        self
+    }
+
+    /// Add a blur operation with a custom sigma.
+    pub fn blur_with(mut self, sigma: f32) -> Self {
+        self.operations.push(MaskOperation::Blur { sigma });
+        self
+    }
+
+    /// Add a threshold operation using the default mask threshold.
+    pub fn threshold(mut self) -> Self {
+        let value = self.default_mask_processing.mask_threshold;
+        self.operations.push(MaskOperation::Threshold { value });
+        self
+    }
+
+    /// Add a threshold operation with a custom value.
+    pub fn threshold_with(mut self, value: u8) -> Self {
+        self.operations.push(MaskOperation::Threshold { value });
+        self
+    }
+
+    /// Add a dilation operation using the default radius.
+    pub fn dilate(mut self) -> Self {
+        let radius = self.default_mask_processing.dilation_radius;
+        self.operations.push(MaskOperation::Dilate { radius });
+        self
+    }
+
+    /// Add a dilation operation with a custom radius.
+    pub fn dilate_with(mut self, radius: f32) -> Self {
+        self.operations.push(MaskOperation::Dilate { radius });
+        self
+    }
+
+    /// Add a hole-filling operation to the processing pipeline.
+    pub fn fill_holes(mut self) -> Self {
+        let threshold = self.default_mask_processing.mask_threshold;
+        self.operations.push(MaskOperation::FillHoles { threshold });
+        self
+    }
+
+    /// Process the raw matte with the accumulated operations and default options.
+    pub fn processed(self) -> OutlineResult<MaskHandle> {
+        self.process_with_options(None)
+    }
+
+    /// Process the raw matte with the accumulated operations and custom options.
+    pub fn processed_with(self, options: &MaskProcessingOptions) -> OutlineResult<MaskHandle> {
+        self.process_with_options(Some(options))
+    }
+
+    /// Helper function to process with options.
+    fn process_with_options(
+        mut self,
+        options: Option<&MaskProcessingOptions>,
+    ) -> OutlineResult<MaskHandle> {
+        let mut ops = std::mem::take(&mut self.operations);
+        match options {
+            Some(custom) => ops.extend(operations_from_options(custom)),
+            None if ops.is_empty() => {
+                ops.extend(operations_from_options(&self.default_mask_processing))
+            }
+            None => {}
+        }
+
+        let mask = apply_operations(self.raw_matte.as_ref(), &ops);
+        Ok(MaskHandle::new(
+            Arc::clone(&self.rgb_image),
+            mask,
+            self.default_mask_processing,
+        ))
+    }
+
+    /// Compose the RGBA foreground image from the RGB image and the raw matte.
+    pub fn foreground(&self) -> OutlineResult<ForegroundHandle> {
+        let rgba = compose_foreground(self.rgb_image.as_ref(), self.raw_matte.as_ref())?;
+        Ok(ForegroundHandle { image: rgba })
+    }
+
+    /// Trace the raw matte using the specified vectorizer and options.
+    pub fn trace<V>(&self, vectorizer: &V, options: &V::Options) -> OutlineResult<V::Output>
+    where
+        V: MaskVectorizer,
+    {
+        vectorizer.vectorize(self.raw_matte.as_ref(), options)
+    }
+}
+
+/// Represents a concrete mask image along with pending processing instructions.
+#[derive(Debug, Clone)]
+pub struct MaskHandle {
+    rgb_image: Arc<RgbImage>,
+    mask: GrayImage,
+    default_mask_processing: MaskProcessingOptions,
+    operations: Vec<MaskOperation>,
+}
+
+impl MaskHandle {
+    fn new(
+        rgb_image: Arc<RgbImage>,
+        mask: GrayImage,
+        default_mask_processing: MaskProcessingOptions,
+    ) -> Self {
+        Self {
+            rgb_image,
+            mask,
+            default_mask_processing,
+            operations: Vec::new(),
+        }
+    }
+
+    /// Get the raw  mask.
+    pub fn raw(&self) -> GrayImage {
+        self.mask.clone()
+    }
+
+    /// Get a reference to the mask.
+    pub fn image(&self) -> &GrayImage {
+        &self.mask
+    }
+
+    /// Consume the handle and return the mask.
+    pub fn into_image(self) -> GrayImage {
+        self.mask
+    }
+
+    /// Save the mask to the specified path.
+    pub fn save(&self, path: impl AsRef<Path>) -> OutlineResult<()> {
+        self.mask.save(path)?;
+        Ok(())
+    }
+
+    /// Add a blur operation using the default sigma.
+    pub fn blur(mut self) -> Self {
+        let sigma = self.default_mask_processing.blur_sigma;
+        self.operations.push(MaskOperation::Blur { sigma });
+        self
+    }
+
+    /// Add a blur operation with a custom sigma.
+    pub fn blur_with(mut self, sigma: f32) -> Self {
+        self.operations.push(MaskOperation::Blur { sigma });
+        self
+    }
+
+    /// Add a threshold operation using the default mask threshold.
+    pub fn threshold(mut self) -> Self {
+        let value = self.default_mask_processing.mask_threshold;
+        self.operations.push(MaskOperation::Threshold { value });
+        self
+    }
+
+    /// Add a threshold operation with a custom value.
+    pub fn threshold_with(mut self, value: u8) -> Self {
+        self.operations.push(MaskOperation::Threshold { value });
+        self
+    }
+
+    /// Add a dilation operation using the default radius.
+    pub fn dilate(mut self) -> Self {
+        let radius = self.default_mask_processing.dilation_radius;
+        self.operations.push(MaskOperation::Dilate { radius });
+        self
+    }
+
+    /// Add a dilation operation with a custom radius.
+    pub fn dilate_with(mut self, radius: f32) -> Self {
+        self.operations.push(MaskOperation::Dilate { radius });
+        self
+    }
+
+    /// Add a hole-filling operation to the processing pipeline.
+    pub fn fill_holes(mut self) -> Self {
+        let threshold = self.default_mask_processing.mask_threshold;
+        self.operations.push(MaskOperation::FillHoles { threshold });
+        self
+    }
+
+    /// Process the mask with the accumulated operations and default options.
+    pub fn processed(self) -> OutlineResult<MaskHandle> {
+        self.process_with_options(None)
+    }
+
+    /// Process the mask with the accumulated operations and custom options.
+    pub fn processed_with(self, options: &MaskProcessingOptions) -> OutlineResult<MaskHandle> {
+        self.process_with_options(Some(options))
+    }
+
+    /// Helper function to process with options.
+    fn process_with_options(
+        mut self,
+        options: Option<&MaskProcessingOptions>,
+    ) -> OutlineResult<MaskHandle> {
+        let mut ops = std::mem::take(&mut self.operations);
+        match options {
+            Some(custom) => ops.extend(operations_from_options(custom)),
+            None if ops.is_empty() => {
+                ops.extend(operations_from_options(&self.default_mask_processing))
+            }
+            None => {}
+        }
+
+        let mask = apply_operations(&self.mask, &ops);
+        Ok(MaskHandle::new(
+            self.rgb_image,
+            mask,
+            self.default_mask_processing,
+        ))
+    }
+
+    /// Compose the RGBA foreground image from the RGB image and the current mask.
+    pub fn foreground(&self) -> OutlineResult<ForegroundHandle> {
+        let rgba = compose_foreground(self.rgb_image.as_ref(), &self.mask)?;
+        Ok(ForegroundHandle { image: rgba })
+    }
+
+    /// Trace the current mask using the specified vectorizer and options.
+    pub fn trace<V>(&self, vectorizer: &V, options: &V::Options) -> OutlineResult<V::Output>
+    where
+        V: MaskVectorizer,
+    {
+        vectorizer.vectorize(&self.mask, options)
+    }
+}
+
+pub struct ForegroundHandle {
+    image: RgbaImage,
+}
+
+impl ForegroundHandle {
+    /// Get a reference to the RGBA foreground image.
+    pub fn image(&self) -> &RgbaImage {
+        &self.image
+    }
+
+    /// Consume the handle and return the RGBA foreground image.
+    pub fn into_image(self) -> RgbaImage {
+        self.image
+    }
+
+    /// Save the RGBA foreground image to the specified path.
+    pub fn save(&self, path: impl AsRef<Path>) -> OutlineResult<()> {
+        self.image.save(path)?;
+        Ok(())
+    }
 }
