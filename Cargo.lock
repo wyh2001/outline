@@ -1279,7 +1279,7 @@ dependencies = [
 
 [[package]]
 name = "outline-core"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "clap 4.5.49",
  "image 0.25.8",
