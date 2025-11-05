@@ -1,10 +1,10 @@
 use std::fs;
 
-use outline::{MaskProcessingOptions, OutlineResult, TraceOptions, VtracerSvgVectorizer};
+use outline::{OutlineResult, TraceOptions, VtracerSvgVectorizer};
 
 use crate::cli::{BinaryOption, GlobalOptions, MaskSourceArg, TraceCommand};
 
-use super::utils::{build_outline, derive_svg_path};
+use super::utils::{build_outline, derive_svg_path, processing_requested};
 
 /// The main function to run the trace command.
 pub fn run(global: &GlobalOptions, cmd: TraceCommand) -> OutlineResult<()> {
@@ -36,12 +36,7 @@ pub fn run(global: &GlobalOptions, cmd: TraceCommand) -> OutlineResult<()> {
     options.invert_svg = cmd.trace_options.invert_svg;
 
     let vectorizer = VtracerSvgVectorizer;
-    let defaults = MaskProcessingOptions::default();
-    let processing_requested = cmd.mask_processing.binary == BinaryOption::Enabled
-        || cmd.mask_processing.blur.is_some()
-        || cmd.mask_processing.dilate.is_some()
-        || cmd.mask_processing.fill_holes
-        || cmd.mask_processing.mask_threshold != defaults.mask_threshold;
+    let processing_requested = processing_requested(&cmd.mask_processing);
 
     let mask_source = match cmd.mask_source {
         MaskSourceArg::Auto => {

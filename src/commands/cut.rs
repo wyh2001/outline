@@ -1,8 +1,8 @@
-use outline::{MaskHandle, MaskProcessingOptions, MatteHandle, OutlineResult};
+use outline::{MaskHandle, MatteHandle, OutlineResult};
 
 use crate::cli::{AlphaFromArg, BinaryOption, CutCommand, GlobalOptions};
 
-use super::utils::{build_outline, derive_variant_path};
+use super::utils::{build_outline, derive_variant_path, processing_requested};
 
 /// The main function to run the cut command.
 pub fn run(global: &GlobalOptions, cmd: CutCommand) -> OutlineResult<()> {
@@ -27,11 +27,7 @@ pub fn run(global: &GlobalOptions, cmd: CutCommand) -> OutlineResult<()> {
     };
 
     let mut processed_mask: Option<MaskHandle> = None;
-    let processing_requested = cmd.mask_processing.binary == BinaryOption::Enabled
-        || cmd.mask_processing.blur.is_some()
-        || cmd.mask_processing.dilate.is_some()
-        || cmd.mask_processing.fill_holes
-        || cmd.mask_processing.mask_threshold != MaskProcessingOptions::default().mask_threshold;
+    let processing_requested = processing_requested(&cmd.mask_processing);
 
     let alpha_source = match cmd.alpha_source {
         AlphaFromArg::Auto => {
