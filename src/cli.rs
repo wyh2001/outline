@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand, ValueEnum, ValueHint};
 use image::imageops::FilterType;
-use outline::MaskProcessingOptions;
+use outline::{MaskProcessingOptions, TraceOptions};
 use visioncortex::PathSimplifyMode;
 use vtracer::{ColorMode, Hierarchical};
 
@@ -312,4 +312,28 @@ pub struct TraceOptionsArgs {
     /// Invert foreground/background in the output SVG
     #[arg(long = "invert-svg")]
     pub invert_svg: bool,
+}
+
+impl From<&TraceOptionsArgs> for TraceOptions {
+    fn from(args: &TraceOptionsArgs) -> Self {
+        let mut options = TraceOptions::default();
+        options.tracer_color_mode = args.color_mode.into();
+        options.tracer_hierarchical = args.hierarchy.into();
+        options.tracer_mode = args.mode.into();
+        options.tracer_filter_speckle = args.filter_speckle;
+        options.tracer_color_precision = args.color_precision;
+        options.tracer_layer_difference = args.layer_difference;
+        options.tracer_corner_threshold = args.corner_threshold;
+        options.tracer_length_threshold = args.length_threshold;
+        options.tracer_max_iterations = args.max_iterations;
+        options.tracer_splice_threshold = args.splice_threshold;
+        if let Some(path_precision) = args.path_precision {
+            options.tracer_path_precision = Some(path_precision);
+        }
+        if args.no_path_precision {
+            options.tracer_path_precision = None;
+        }
+        options.invert_svg = args.invert_svg;
+        options
+    }
 }
