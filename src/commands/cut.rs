@@ -1,8 +1,11 @@
 use outline::{MaskHandle, MatteHandle, OutlineResult};
 
-use crate::cli::{AlphaFromArg, BinaryOption, CutCommand, GlobalOptions};
+use crate::cli::{AlphaFromArg, CutCommand, GlobalOptions};
 
-use super::utils::{build_outline, derive_variant_path, processing_requested};
+use super::utils::{
+    build_outline, derive_variant_path, processing_requested, resolve_alpha_source,
+    warn_if_soft_conflict,
+};
 
 /// The main function to run the cut command.
 pub fn run(global: &GlobalOptions, cmd: CutCommand) -> OutlineResult<()> {
@@ -29,26 +32,12 @@ pub fn run(global: &GlobalOptions, cmd: CutCommand) -> OutlineResult<()> {
     let mut processed_mask: Option<MaskHandle> = None;
     let processing_requested = processing_requested(&cmd.mask_processing);
 
-    let alpha_source = match cmd.alpha_source {
-        AlphaFromArg::Auto => {
-            if processing_requested {
-                AlphaFromArg::Processed
-            } else {
-                AlphaFromArg::Raw
-            }
-        }
-        other => other,
-    };
+    let alpha_source = resolve_alpha_source(cmd.alpha_source, processing_requested);
 
     let needs_processed_mask =
         matches!(alpha_source, AlphaFromArg::Processed) || cmd.export_mask.is_some();
-    if needs_processed_mask
-        && cmd.mask_processing.binary == BinaryOption::Disabled
-        && (cmd.mask_processing.dilate.is_some() || cmd.mask_processing.fill_holes)
-    {
-        eprintln!(
-            "Warning: --no-binary disables thresholding, but dilation/fill-holes assume a hard mask; processed output may be unexpected."
-        );
+    if needs_processed_mask {
+        warn_if_soft_conflict(&cmd.mask_processing, "processed output");
     }
 
     let mut ensure_processed = |matte: &MatteHandle| -> OutlineResult<MaskHandle> {

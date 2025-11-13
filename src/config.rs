@@ -49,7 +49,7 @@ impl InferenceSettings {
 }
 
 /// Options describing how a mask should be post-processed.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct MaskProcessingOptions {
     pub binary: bool,
     pub blur: bool,
