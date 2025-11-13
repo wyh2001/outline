@@ -3,7 +3,8 @@ use outline::OutlineResult;
 use crate::cli::{GlobalOptions, MaskCommand, MaskExportSource};
 
 use super::utils::{
-    build_outline, derive_variant_path, processing_requested, resolve_mask_export_source, warn_if_soft_conflict,
+    build_outline, derive_variant_path, processing_requested, resolve_mask_export_source,
+    warn_if_soft_conflict,
 };
 
 // Resolved by helper in utils now.
@@ -13,7 +14,8 @@ pub fn run(global: &GlobalOptions, cmd: MaskCommand) -> OutlineResult<()> {
     let outline = build_outline(global, &cmd.mask_processing);
     let session = outline.for_image(&cmd.input)?;
     let matte = session.matte();
-    let mask_source = resolve_mask_export_source(cmd.mask_source, processing_requested(&cmd.mask_processing));
+    let mask_source =
+        resolve_mask_export_source(cmd.mask_source, processing_requested(&cmd.mask_processing));
 
     let default_suffix = match mask_source {
         MaskExportSource::Processed => "mask",

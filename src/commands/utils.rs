@@ -43,9 +43,7 @@ pub fn processing_requested(args: &MaskProcessingArgs) -> bool {
 
 /// Emit a warning when dilation/fill-holes are requested but thresholding is disabled.
 pub fn warn_if_soft_conflict(args: &MaskProcessingArgs, context: &str) {
-    if args.binary == BinaryOption::Disabled
-        && (args.dilate.is_some() || args.fill_holes)
-    {
+    if args.binary == BinaryOption::Disabled && (args.dilate.is_some() || args.fill_holes) {
         eprintln!(
             "Warning: --no-binary disables thresholding, but dilation/fill-holes assume a hard mask; {} may be unexpected.",
             context
@@ -68,7 +66,10 @@ pub fn resolve_alpha_source(requested: AlphaFromArg, processing_requested: bool)
 }
 
 /// Resolve mask source arg with Auto behavior (trace command).
-pub fn resolve_mask_source_arg(requested: MaskSourceArg, processing_requested: bool) -> MaskSourceArg {
+pub fn resolve_mask_source_arg(
+    requested: MaskSourceArg,
+    processing_requested: bool,
+) -> MaskSourceArg {
     match requested {
         MaskSourceArg::Auto => {
             if processing_requested {
@@ -82,7 +83,10 @@ pub fn resolve_mask_source_arg(requested: MaskSourceArg, processing_requested: b
 }
 
 /// Resolve mask export source with Auto behavior (mask command).
-pub fn resolve_mask_export_source(requested: MaskExportSource, processing_requested: bool) -> MaskExportSource {
+pub fn resolve_mask_export_source(
+    requested: MaskExportSource,
+    processing_requested: bool,
+) -> MaskExportSource {
     match requested {
         MaskExportSource::Auto => {
             if processing_requested {
