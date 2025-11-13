@@ -1,8 +1,8 @@
 use std::path::{Path, PathBuf};
 
-use outline::Outline;
+use outline::{MaskProcessingOptions, Outline};
 
-use crate::cli::{GlobalOptions, MaskProcessingArgs};
+use crate::cli::{BinaryOption, GlobalOptions, MaskProcessingArgs};
 
 /// The convenience function to build an Outline instance with the input global and mask processing options.
 pub fn build_outline(global: &GlobalOptions, mask_args: &MaskProcessingArgs) -> Outline {
@@ -31,4 +31,14 @@ pub fn derive_svg_path(input: &Path) -> PathBuf {
     let mut path = input.to_path_buf();
     path.set_extension("svg");
     path
+}
+
+/// Determine if any mask processing is requested based on the provided arguments.
+pub fn processing_requested(args: &MaskProcessingArgs) -> bool {
+    let defaults = MaskProcessingOptions::default();
+    args.binary == BinaryOption::Enabled
+        || args.blur.is_some()
+        || args.dilate.is_some()
+        || args.fill_holes
+        || args.mask_threshold != defaults.mask_threshold
 }

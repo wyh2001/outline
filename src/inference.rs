@@ -3,7 +3,7 @@ use std::io;
 use std::path::Path;
 
 use image::imageops::FilterType;
-use image::{GrayImage, ImageBuffer, ImageReader, Luma, RgbImage};
+use image::{DynamicImage, GrayImage, ImageBuffer, ImageDecoder, ImageReader, Luma, RgbImage};
 use ndarray::{Array2, Array4, ArrayViewD, Axis, Ix2};
 use ort::session::Session;
 use ort::session::builder::GraphOptimizationLevel;
@@ -96,6 +96,15 @@ fn positive_dim_to_usize(dim: i64) -> Option<usize> {
     } else {
         None
     }
+}
+
+/// Load an RGB image from the given path, applying orientation from EXIF data.
+fn load_rgb_with_orientation(path: &Path) -> OutlineResult<RgbImage> {
+    let mut decoder = ImageReader::open(path)?.into_decoder()?;
+    let orientation = decoder.orientation()?;
+    let mut image = DynamicImage::from_decoder(decoder)?;
+    image.apply_orientation(orientation);
+    Ok(image.into_rgb8())
 }
 
 /// Resize and normalizes the RGB image into a tensor that matches the model spec.
@@ -214,7 +223,7 @@ pub fn run_matte_pipeline(
     }
     let mut session = builder.commit_from_file(&settings.model_path)?;
 
-    let rgb_input = ImageReader::open(image_path)?.decode()?.to_rgb8();
+    let rgb_input = load_rgb_with_orientation(image_path)?;
     let orig_w = rgb_input.width();
     let orig_h = rgb_input.height();
 
