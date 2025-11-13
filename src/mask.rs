@@ -1,8 +1,10 @@
 use std::collections::VecDeque;
 
 use image::{GrayImage, Luma};
-use imageproc::distance_transform::euclidean_squared_distance_transform;
+use imageproc::contrast::{ThresholdType, threshold as ip_threshold};
+use imageproc::distance_transform::Norm;
 use imageproc::filter::gaussian_blur_f32;
+use imageproc::morphology::dilate as ip_dilate;
 use ndarray::Array2;
 
 use crate::config::MaskProcessingOptions;
@@ -68,13 +70,11 @@ pub fn operations_from_options(options: &MaskProcessingOptions) -> Vec<MaskOpera
 /// Convert a 2D array of f32 values in [0.0, 1.0] to a grayscale image.
 pub fn array_to_gray_image(array: &Array2<f32>) -> GrayImage {
     let (h, w) = array.dim();
-    let mut gray = GrayImage::new(w as u32, h as u32);
-    for (x, y, pixel) in gray.enumerate_pixels_mut() {
+    GrayImage::from_fn(w as u32, h as u32, |x, y| {
         let value = array[[y as usize, x as usize]].clamp(0.0, 1.0);
         let byte = (value * 255.0 + 0.5) as u8;
-        *pixel = Luma([byte]);
-    }
-    gray
+        Luma([byte])
+    })
 }
 
 /// Convert a grayscale image to an RGBA color image.
@@ -116,27 +116,11 @@ pub fn gray_to_color_image_rgba(
 
 /// Threshold the grayscale image to produce a binary mask.
 pub fn threshold_mask(gray: &GrayImage, thr: u8) -> GrayImage {
-    let (w, h) = gray.dimensions();
-    let mut out = GrayImage::new(w, h);
-    for (out_pixel, gray_pixel) in out.pixels_mut().zip(gray.pixels()) {
-        let Luma([v]) = gray_pixel;
-        let bin = if *v >= thr { 255 } else { 0 };
-        *out_pixel = Luma([bin]);
-    }
-    out
+    ip_threshold(gray, thr, ThresholdType::Binary)
 }
 
 pub fn dilate_euclidean(mask_bin: &GrayImage, r: f32) -> GrayImage {
-    let d2 = euclidean_squared_distance_transform(mask_bin);
-    let r2: f64 = (r as f64) * (r as f64);
-    let (w, h) = mask_bin.dimensions();
-    let mut out = GrayImage::new(w, h);
-    for (o_pixel, d2pixel) in out.pixels_mut().zip(d2.pixels()) {
-        let d2xy: f64 = d2pixel[0];
-        let v: u8 = if d2xy <= r2 { 255 } else { 0 };
-        *o_pixel = Luma([v]);
-    }
-    out
+    ip_dilate(mask_bin, Norm::L2, r.round() as u8)
 }
 
 /// Fill holes in a binary mask using a flood-fill algorithm from the borders.
