@@ -1,28 +1,19 @@
 use outline::OutlineResult;
 
-use crate::cli::{BinaryOption, GlobalOptions, MaskCommand, MaskExportSource, MaskProcessingArgs};
+use crate::cli::{GlobalOptions, MaskCommand, MaskExportSource};
 
-use super::utils::{build_outline, derive_variant_path, processing_requested};
+use super::utils::{
+    build_outline, derive_variant_path, processing_requested, resolve_mask_export_source, warn_if_soft_conflict,
+};
 
-fn resolve_mask_source(requested: MaskExportSource, args: &MaskProcessingArgs) -> MaskExportSource {
-    match requested {
-        MaskExportSource::Auto => {
-            if processing_requested(args) {
-                MaskExportSource::Processed
-            } else {
-                MaskExportSource::Raw
-            }
-        }
-        other => other,
-    }
-}
+// Resolved by helper in utils now.
 
 /// The main function to run the mask command.
 pub fn run(global: &GlobalOptions, cmd: MaskCommand) -> OutlineResult<()> {
     let outline = build_outline(global, &cmd.mask_processing);
     let session = outline.for_image(&cmd.input)?;
     let matte = session.matte();
-    let mask_source = resolve_mask_source(cmd.mask_source, &cmd.mask_processing);
+    let mask_source = resolve_mask_export_source(cmd.mask_source, processing_requested(&cmd.mask_processing));
 
     let default_suffix = match mask_source {
         MaskExportSource::Processed => "mask",
@@ -36,13 +27,7 @@ pub fn run(global: &GlobalOptions, cmd: MaskCommand) -> OutlineResult<()> {
 
     match mask_source {
         MaskExportSource::Processed => {
-            if cmd.mask_processing.binary == BinaryOption::Disabled
-                && (cmd.mask_processing.dilate.is_some() || cmd.mask_processing.fill_holes)
-            {
-                eprintln!(
-                    "Warning: --no-binary disables thresholding, but dilation/fill-holes assume a hard mask; output may be unexpected."
-                );
-            }
+            warn_if_soft_conflict(&cmd.mask_processing, "output");
             let mask = matte.clone().processed()?;
             mask.save(&output_path)?;
             println!("Processed mask PNG saved to {}", output_path.display());

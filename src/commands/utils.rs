@@ -2,7 +2,9 @@ use std::path::{Path, PathBuf};
 
 use outline::{MaskProcessingOptions, Outline};
 
-use crate::cli::{BinaryOption, GlobalOptions, MaskProcessingArgs};
+use crate::cli::{
+    AlphaFromArg, BinaryOption, GlobalOptions, MaskExportSource, MaskProcessingArgs, MaskSourceArg,
+};
 
 /// The convenience function to build an Outline instance with the input global and mask processing options.
 pub fn build_outline(global: &GlobalOptions, mask_args: &MaskProcessingArgs) -> Outline {
@@ -35,10 +37,60 @@ pub fn derive_svg_path(input: &Path) -> PathBuf {
 
 /// Determine if any mask processing is requested based on the provided arguments.
 pub fn processing_requested(args: &MaskProcessingArgs) -> bool {
-    let defaults = MaskProcessingOptions::default();
-    args.binary == BinaryOption::Enabled
-        || args.blur.is_some()
-        || args.dilate.is_some()
-        || args.fill_holes
-        || args.mask_threshold != defaults.mask_threshold
+    let derived: MaskProcessingOptions = args.into();
+    derived != MaskProcessingOptions::default()
+}
+
+/// Emit a warning when dilation/fill-holes are requested but thresholding is disabled.
+pub fn warn_if_soft_conflict(args: &MaskProcessingArgs, context: &str) {
+    if args.binary == BinaryOption::Disabled
+        && (args.dilate.is_some() || args.fill_holes)
+    {
+        eprintln!(
+            "Warning: --no-binary disables thresholding, but dilation/fill-holes assume a hard mask; {} may be unexpected.",
+            context
+        );
+    }
+}
+
+/// Resolve alpha source with Auto behavior.
+pub fn resolve_alpha_source(requested: AlphaFromArg, processing_requested: bool) -> AlphaFromArg {
+    match requested {
+        AlphaFromArg::Auto => {
+            if processing_requested {
+                AlphaFromArg::Processed
+            } else {
+                AlphaFromArg::Raw
+            }
+        }
+        other => other,
+    }
+}
+
+/// Resolve mask source arg with Auto behavior (trace command).
+pub fn resolve_mask_source_arg(requested: MaskSourceArg, processing_requested: bool) -> MaskSourceArg {
+    match requested {
+        MaskSourceArg::Auto => {
+            if processing_requested {
+                MaskSourceArg::Processed
+            } else {
+                MaskSourceArg::Raw
+            }
+        }
+        other => other,
+    }
+}
+
+/// Resolve mask export source with Auto behavior (mask command).
+pub fn resolve_mask_export_source(requested: MaskExportSource, processing_requested: bool) -> MaskExportSource {
+    match requested {
+        MaskExportSource::Auto => {
+            if processing_requested {
+                MaskExportSource::Processed
+            } else {
+                MaskExportSource::Raw
+            }
+        }
+        other => other,
+    }
 }
