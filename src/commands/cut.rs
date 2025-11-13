@@ -3,7 +3,8 @@ use outline::{MaskHandle, MatteHandle, OutlineResult};
 use crate::cli::{AlphaFromArg, CutCommand, GlobalOptions};
 
 use super::utils::{
-    build_outline, derive_variant_path, processing_requested, resolve_alpha_source, warn_if_soft_conflict,
+    build_outline, derive_variant_path, processing_requested, resolve_alpha_source,
+    warn_if_soft_conflict,
 };
 
 /// The main function to run the cut command.

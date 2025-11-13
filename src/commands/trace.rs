@@ -5,7 +5,8 @@ use outline::{OutlineResult, TraceOptions, VtracerSvgVectorizer};
 use crate::cli::{GlobalOptions, MaskSourceArg, TraceCommand};
 
 use super::utils::{
-    build_outline, derive_svg_path, processing_requested, resolve_mask_source_arg, warn_if_soft_conflict,
+    build_outline, derive_svg_path, processing_requested, resolve_mask_source_arg,
+    warn_if_soft_conflict,
 };
 
 /// The main function to run the trace command.
