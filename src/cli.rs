@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use clap::{Args, Parser, Subcommand, ValueEnum};
+use clap::{Args, Parser, Subcommand, ValueEnum, ValueHint};
 use image::imageops::FilterType;
 use outline::MaskProcessingOptions;
 use visioncortex::PathSimplifyMode;
@@ -20,7 +20,13 @@ pub struct Cli {
 #[derive(Args, Debug)]
 pub struct GlobalOptions {
     /// ONNX model path
-    #[arg(short = 'm', long, default_value = "model.onnx")]
+    #[arg(
+        short = 'm',
+        long,
+        env = outline::config::ENV_MODEL_PATH,
+        value_hint = ValueHint::FilePath,
+        default_value = outline::config::DEFAULT_MODEL_PATH
+    )]
     pub model: PathBuf,
     /// Intra-op thread count for ORT (None to let ORT decide)
     #[arg(long)]

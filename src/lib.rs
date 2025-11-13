@@ -18,6 +18,7 @@ use std::sync::Arc;
 use image::imageops::FilterType;
 use image::{GrayImage, RgbImage, RgbaImage};
 
+use crate::config::{DEFAULT_MODEL_PATH, ENV_MODEL_PATH};
 use crate::foreground::compose_foreground;
 use crate::inference::run_matte_pipeline;
 use crate::mask::{MaskOperation, apply_operations, operations_from_options};
@@ -37,6 +38,28 @@ impl Outline {
             settings: InferenceSettings::new(model_path),
             default_mask_processing: MaskProcessingOptions::default(),
         }
+    }
+
+    /// Construct Outline using env var `ENV_MODEL_PATH` or fallback to `DEFAULT_MODEL_PATH`.
+    pub fn from_env_or_default() -> Self {
+        let resolved = std::env::var_os(ENV_MODEL_PATH)
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(DEFAULT_MODEL_PATH));
+        Self::new(resolved)
+    }
+
+    /// Try constructing Outline strictly from env var; returns error if not set.
+    pub fn try_from_env() -> OutlineResult<Self> {
+        if let Some(from_env) = std::env::var_os(ENV_MODEL_PATH) {
+            return Ok(Self::new(PathBuf::from(from_env)));
+        }
+        Err(OutlineError::Io(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!(
+                "Model path not specified in env {}; set the variable to proceed",
+                ENV_MODEL_PATH
+            ),
+        )))
     }
 
     /// Set the filter used to resize the input image for the model.

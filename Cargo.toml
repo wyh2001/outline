@@ -21,7 +21,7 @@ ndarray = "0.16.1"
 visioncortex = { version = "0.8.8", optional = true }
 imageproc = "0.25.0"
 thiserror = "2"
-clap = { version = "4", features = ["derive"], optional = true }
+clap = { version = "4", features = ["derive", "env"], optional = true }
 
 [[bin]]
 name = "outline"
