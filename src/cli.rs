@@ -23,19 +23,20 @@ pub struct GlobalOptions {
     #[arg(
         short = 'm',
         long,
+        global = true,
         env = outline::config::ENV_MODEL_PATH,
         value_hint = ValueHint::FilePath,
         default_value = outline::config::DEFAULT_MODEL_PATH
     )]
     pub model: PathBuf,
     /// Intra-op thread count for ORT (None to let ORT decide)
-    #[arg(long)]
+    #[arg(long, global = true)]
     pub intra_threads: Option<usize>,
     /// Filter used when resizing the input before inference
-    #[arg(long = "input-resample-filter", value_enum, default_value_t = ResampleFilter::Triangle)]
+    #[arg(long = "input-resample-filter", value_enum, default_value_t = ResampleFilter::Triangle, global = true)]
     pub input_resample_filter: ResampleFilter,
     /// Filter used when resizing the matte back to the original resolution
-    #[arg(long = "output-resample-filter", value_enum, default_value_t = ResampleFilter::Lanczos3)]
+    #[arg(long = "output-resample-filter", value_enum, default_value_t = ResampleFilter::Lanczos3, global = true)]
     pub output_resample_filter: ResampleFilter,
 }
 
