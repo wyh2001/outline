@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use clap::{Args, Parser, Subcommand, ValueEnum};
+use clap::{Args, Parser, Subcommand, ValueEnum, ValueHint};
 use image::imageops::FilterType;
 use outline::MaskProcessingOptions;
 use visioncortex::PathSimplifyMode;
@@ -20,7 +20,13 @@ pub struct Cli {
 #[derive(Args, Debug)]
 pub struct GlobalOptions {
     /// ONNX model path
-    #[arg(short = 'm', long, default_value = "model.onnx")]
+    #[arg(
+        short = 'm',
+        long,
+        env = outline::config::ENV_MODEL_PATH,
+        value_hint = ValueHint::FilePath,
+        default_value = outline::config::DEFAULT_MODEL_PATH
+    )]
     pub model: PathBuf,
     /// Intra-op thread count for ORT (None to let ORT decide)
     #[arg(long)]
@@ -119,7 +125,7 @@ pub struct TraceCommand {
 #[derive(Args, Debug)]
 pub struct MaskProcessingArgs {
     /// Enable gaussian blur before thresholding (optionally override sigma)
-    #[arg(long = "blur", value_name = "SIGMA", num_args = 0..=1, default_missing_value = "6.0")]
+    #[arg(long = "blur", value_name = "SIGMA", num_args = 0..=1, default_missing_value = "6.0", require_equals = true)]
     pub blur: Option<f32>,
     /// Threshold applied to the matte (0-255 or 0.0-1.0)
     #[arg(long = "mask-threshold", default_value_t = 120, value_parser = parse_mask_threshold)]
@@ -130,10 +136,11 @@ pub struct MaskProcessingArgs {
         value_enum,
         default_value_t = BinaryOption::Auto,
         num_args = 0..=1,
-        default_missing_value = "enabled"
+        default_missing_value = "enabled",
+        require_equals = true
     )]
     pub binary: BinaryOption,
-    #[arg(long = "dilate", value_name = "RADIUS", num_args = 0..=1, default_missing_value = "5.0")]
+    #[arg(long = "dilate", value_name = "RADIUS", num_args = 0..=1, default_missing_value = "5.0", require_equals = true)]
     pub dilate: Option<f32>,
     /// Fill enclosed holes in the mask before vectorization
     #[arg(long = "fill-holes")]
@@ -297,7 +304,7 @@ pub struct TraceOptionsArgs {
     #[arg(long = "splice-threshold", default_value_t = 45)]
     pub splice_threshold: i32,
     /// Path precision override (decimal places)
-    #[arg(long = "path-precision")]
+    #[arg(long = "path-precision", conflicts_with = "no_path_precision")]
     pub path_precision: Option<u32>,
     /// Disable explicit path precision override
     #[arg(long = "no-path-precision")]

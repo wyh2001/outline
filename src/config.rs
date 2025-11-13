@@ -2,6 +2,9 @@ use std::path::PathBuf;
 
 use image::imageops::FilterType;
 
+pub const ENV_MODEL_PATH: &str = "OUTLINE_MODEL_PATH";
+pub const DEFAULT_MODEL_PATH: &str = "model.onnx";
+
 /// Options for the model and input image.
 #[derive(Debug, Clone)]
 pub struct InferenceSettings {
