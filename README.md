@@ -10,7 +10,12 @@ It is written in Rust, powered by ONNX Runtime (ort) and VTracer, and works with
 
 Outline supports being used as a library or via a command-line interface (CLI). 
 
-Before using, specify your ONNX model path (default: `model.onnx` at the project root).
+Before using, specify your ONNX model path:
+- CLI flag: `-m, --model <path>`
+- Library API: `Outline::new(<path>)`
+- Environment variable: set `OUTLINE_MODEL_PATH`
+
+Resolution order: user value > environment variable > default (`model.onnx`).
 
 ### Library Usage
 
@@ -18,7 +23,7 @@ Before using, specify your ONNX model path (default: `model.onnx` at the project
 use outline::{MaskProcessingOptions, Outline, TraceOptions, VtracerSvgVectorizer};
 
 fn generate_assets() -> outline::OutlineResult<()> {
-	let outline = Outline::new("model.onnx")
+	let outline = Outline::new("model.onnx") // or: Outline::try_from_env()
 		.with_default_mask_processing(MaskProcessingOptions::default());
 	let session = outline.for_image("input.png")?;
 	let matte = session.matte();
