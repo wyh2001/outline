@@ -121,9 +121,9 @@ cargo add outline-core --version 0.1.0-alpha.1 --features vectorizer-vtracer
 ```
 
 ```rust
-use outline_core::{MaskProcessingOptions, Outline, TraceOptions, VtracerSvgVectorizer};
+use outline::{MaskProcessingOptions, Outline, TraceOptions, VtracerSvgVectorizer};
 
-fn generate_assets() -> outline_core::OutlineResult<()> {
+fn generate_assets() -> outline::OutlineResult<()> {
 	let outline = Outline::new("model.onnx") // or: Outline::try_from_env()
 		.with_default_mask_processing(MaskProcessingOptions::default());
 	let session = outline.for_image("input.png")?;
@@ -143,7 +143,7 @@ fn generate_assets() -> outline_core::OutlineResult<()> {
 
 	Ok(())
 }
-```	
+```
 
 > VtracerSvgVectorizer is only available when the `vectorizer-vtracer` feature is enabled. You can use your own vectorizer by implementing the `SvgVectorizer` trait to avoid depending on VTracer directly.
 

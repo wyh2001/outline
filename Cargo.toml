@@ -13,6 +13,10 @@ vectorizer-vtracer = ["dep:vtracer", "dep:visioncortex"]
 name = "outline"
 path = "src/lib.rs"
 
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
 [dependencies]
 image = "0.25.8"
 ort = "2.0.0-rc.10"
