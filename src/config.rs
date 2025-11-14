@@ -2,10 +2,17 @@ use std::path::PathBuf;
 
 use image::imageops::FilterType;
 
+/// Environment variable name for specifying the model path.
 pub const ENV_MODEL_PATH: &str = "OUTLINE_MODEL_PATH";
+
+/// Default model path used when no explicit path is provided.
 pub const DEFAULT_MODEL_PATH: &str = "model.onnx";
 
-/// Options for the model and input image.
+/// Configuration for ONNX model inference and image preprocessing.
+///
+/// Controls the model path, image resize filters for input/output, and threading behavior.
+/// Use builder methods like [`with_input_resize_filter`](InferenceSettings::with_input_resize_filter)
+/// to customize settings.
 #[derive(Debug, Clone)]
 pub struct InferenceSettings {
     /// Path to the ONNX model file.
@@ -30,13 +37,13 @@ impl InferenceSettings {
     }
 
     /// Set the model resize filter.
-    pub fn with_model_filter(mut self, filter: FilterType) -> Self {
+    pub fn with_input_resize_filter(mut self, filter: FilterType) -> Self {
         self.input_resize_filter = filter;
         self
     }
 
     /// Set the matte resize filter.
-    pub fn with_matte_filter(mut self, filter: FilterType) -> Self {
+    pub fn with_output_resize_filter(mut self, filter: FilterType) -> Self {
         self.output_resize_filter = filter;
         self
     }
@@ -48,7 +55,22 @@ impl InferenceSettings {
     }
 }
 
-/// Options describing how a mask should be post-processed.
+/// Configuration for mask post-processing operations.
+///
+/// Defines the pipeline of blur, threshold, dilation, and hole-filling operations applied
+/// to raw mattes. Used as defaults in [`Outline`](crate::Outline) and can be overridden
+/// per operation via [`MatteHandle`](crate::MatteHandle) and [`MaskHandle`](crate::MaskHandle).
+///
+/// # Explicit Configuration
+///
+/// This struct does **not** apply automatic logic. For example, setting `dilate = true` or
+/// `fill_holes = true` will **not** automatically enable `binary`. If you need a binary mask
+/// for dilation or hole-filling to work meaningfully, you must explicitly set `binary = true`
+/// or call [`threshold`](crate::MatteHandle::threshold) in your processing chain.
+///
+/// **Note**: The CLI's `--binary auto` mode *does* automatically enable thresholding when
+/// `--dilate` or `--fill-holes` is specified. The library leaves this decision to you for
+/// maximum control and predictability.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MaskProcessingOptions {
     pub binary: bool,

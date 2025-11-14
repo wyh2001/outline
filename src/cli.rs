@@ -23,19 +23,20 @@ pub struct GlobalOptions {
     #[arg(
         short = 'm',
         long,
-        env = outline::config::ENV_MODEL_PATH,
+        global = true,
+        env = outline::ENV_MODEL_PATH,
         value_hint = ValueHint::FilePath,
-        default_value = outline::config::DEFAULT_MODEL_PATH
+        default_value = outline::DEFAULT_MODEL_PATH
     )]
     pub model: PathBuf,
     /// Intra-op thread count for ORT (None to let ORT decide)
-    #[arg(long)]
+    #[arg(long, global = true)]
     pub intra_threads: Option<usize>,
     /// Filter used when resizing the input before inference
-    #[arg(long = "input-resample-filter", value_enum, default_value_t = ResampleFilter::Triangle)]
+    #[arg(long = "input-resample-filter", value_enum, default_value_t = ResampleFilter::Triangle, global = true)]
     pub input_resample_filter: ResampleFilter,
     /// Filter used when resizing the matte back to the original resolution
-    #[arg(long = "output-resample-filter", value_enum, default_value_t = ResampleFilter::Lanczos3)]
+    #[arg(long = "output-resample-filter", value_enum, default_value_t = ResampleFilter::Lanczos3, global = true)]
     pub output_resample_filter: ResampleFilter,
 }
 
@@ -125,7 +126,7 @@ pub struct TraceCommand {
 #[derive(Args, Debug)]
 pub struct MaskProcessingArgs {
     /// Enable gaussian blur before thresholding (optionally override sigma)
-    #[arg(long = "blur", value_name = "SIGMA", num_args = 0..=1, default_missing_value = "6.0", require_equals = true)]
+    #[arg(long = "blur", value_name = "SIGMA", num_args = 0..=1, default_missing_value = "6.0")]
     pub blur: Option<f32>,
     /// Threshold applied to the matte (0-255 or 0.0-1.0)
     #[arg(long = "mask-threshold", default_value_t = 120, value_parser = parse_mask_threshold)]
@@ -136,11 +137,10 @@ pub struct MaskProcessingArgs {
         value_enum,
         default_value_t = BinaryOption::Auto,
         num_args = 0..=1,
-        default_missing_value = "enabled",
-        require_equals = true
+        default_missing_value = "enabled"
     )]
     pub binary: BinaryOption,
-    #[arg(long = "dilate", value_name = "RADIUS", num_args = 0..=1, default_missing_value = "5.0", require_equals = true)]
+    #[arg(long = "dilate", value_name = "RADIUS", num_args = 0..=1, default_missing_value = "5.0")]
     pub dilate: Option<f32>,
     /// Fill enclosed holes in the mask before vectorization
     #[arg(long = "fill-holes")]
@@ -316,24 +316,25 @@ pub struct TraceOptionsArgs {
 
 impl From<&TraceOptionsArgs> for TraceOptions {
     fn from(args: &TraceOptionsArgs) -> Self {
-        let mut options = TraceOptions::default();
-        options.tracer_color_mode = args.color_mode.into();
-        options.tracer_hierarchical = args.hierarchy.into();
-        options.tracer_mode = args.mode.into();
-        options.tracer_filter_speckle = args.filter_speckle;
-        options.tracer_color_precision = args.color_precision;
-        options.tracer_layer_difference = args.layer_difference;
-        options.tracer_corner_threshold = args.corner_threshold;
-        options.tracer_length_threshold = args.length_threshold;
-        options.tracer_max_iterations = args.max_iterations;
-        options.tracer_splice_threshold = args.splice_threshold;
-        if let Some(path_precision) = args.path_precision {
-            options.tracer_path_precision = Some(path_precision);
+        let default_opts = TraceOptions::default();
+        let tracer_path_precision = if args.no_path_precision {
+            None
+        } else {
+            args.path_precision.or(default_opts.tracer_path_precision)
+        };
+        Self {
+            tracer_color_mode: args.color_mode.into(),
+            tracer_hierarchical: args.hierarchy.into(),
+            tracer_mode: args.mode.into(),
+            tracer_filter_speckle: args.filter_speckle,
+            tracer_color_precision: args.color_precision,
+            tracer_layer_difference: args.layer_difference,
+            tracer_corner_threshold: args.corner_threshold,
+            tracer_length_threshold: args.length_threshold,
+            tracer_max_iterations: args.max_iterations,
+            tracer_splice_threshold: args.splice_threshold,
+            tracer_path_precision,
+            invert_svg: args.invert_svg,
         }
-        if args.no_path_precision {
-            options.tracer_path_precision = None;
-        }
-        options.invert_svg = args.invert_svg;
-        options
     }
 }

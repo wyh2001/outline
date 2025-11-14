@@ -7,7 +7,10 @@ use crate::{OutlineError, OutlineResult};
 
 use super::MaskVectorizer;
 
-/// Options for tracing the mask to SVG using VTracer.
+/// Configuration for vectorizing masks into SVG paths using VTracer.
+///
+/// Controls color mode, path simplification, precision, and various tracing parameters.
+/// Used with [`VtracerSvgVectorizer`] to convert grayscale masks into scalable vector graphics.
 #[derive(Debug, Clone)]
 pub struct TraceOptions {
     pub tracer_color_mode: ColorMode,
@@ -43,7 +46,10 @@ impl Default for TraceOptions {
     }
 }
 
-/// VTracer-based SVG vectorizer implementation.
+/// Converts grayscale masks to SVG using the VTracer library.
+///
+/// Implements [`MaskVectorizer`] to provide path tracing functionality. Pair with
+/// [`TraceOptions`] to control output style and precision.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct VtracerSvgVectorizer;
 

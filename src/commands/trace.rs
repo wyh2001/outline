@@ -1,6 +1,6 @@
 use std::fs;
 
-use outline::{OutlineResult, TraceOptions, VtracerSvgVectorizer};
+use outline::{OutlineResult, VtracerSvgVectorizer};
 
 use crate::cli::{GlobalOptions, MaskSourceArg, TraceCommand};
 
@@ -19,7 +19,7 @@ pub fn run(global: &GlobalOptions, cmd: TraceCommand) -> OutlineResult<()> {
         .clone()
         .unwrap_or_else(|| derive_svg_path(&cmd.input));
 
-    let options: TraceOptions = (&cmd.trace_options).into();
+    let options = (&cmd.trace_options).into();
 
     let vectorizer = VtracerSvgVectorizer;
     let processing_requested = processing_requested(&cmd.mask_processing);

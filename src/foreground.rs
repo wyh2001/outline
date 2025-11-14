@@ -1,5 +1,3 @@
-use std::path::Path;
-
 use image::{GrayImage, RgbImage, Rgba, RgbaImage};
 
 use crate::{OutlineError, OutlineResult};
@@ -20,11 +18,4 @@ pub fn compose_foreground(rgb: &RgbImage, alpha: &GrayImage) -> OutlineResult<Rg
     }
 
     Ok(rgba)
-}
-
-/// Save the composed RGBA foreground image to the specified output path.
-pub fn export_foreground(rgb: &RgbImage, alpha: &GrayImage, output: &Path) -> OutlineResult<()> {
-    let rgba = compose_foreground(rgb, alpha)?;
-    rgba.save(output)?;
-    Ok(())
 }

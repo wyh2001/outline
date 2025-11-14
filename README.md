@@ -1,51 +1,35 @@
 # Outline
 
-Outline is a background remover with a flexible mask-processing pipeline and a built-in SVG tracing workflow.  
+Outline is a background remover with a flexible mask-processing pipeline and a built-in SVG tracing workflow.
 
 It is written in Rust, powered by ONNX Runtime (ort) and VTracer, and works with U2-Net, BiRefNet, and other ONNX models that share a similar input/output shape.
 
 > This project is still in early development. Breaking changes may occur in future releases.
 
+## Installation
+
+```bash
+cargo install outline-core --version 0.1.0-alpha.1
+```
+
 ## Usage
 
-Outline supports being used as a library or via a command-line interface (CLI). 
+Outline supports being used as a library or via a command-line interface (CLI).
 
-Before using, specify your ONNX model path (default: `model.onnx` at the project root).
+Before using, specify your ONNX model path:
 
-### Library Usage
+- CLI flag: `-m, --model <path>`
+- Library API: `Outline::new(<path>)`
+- Environment variable: set `OUTLINE_MODEL_PATH`
 
-```rust
-use outline::{MaskProcessingOptions, Outline, TraceOptions, VtracerSvgVectorizer};
-
-fn generate_assets() -> outline::OutlineResult<()> {
-	let outline = Outline::new("model.onnx")
-		.with_default_mask_processing(MaskProcessingOptions::default());
-	let session = outline.for_image("input.png")?;
-	let matte = session.matte();
-
-	// Declare the desired mask steps, then apply them with `processed`.
-	let mask = matte
-		.clone()
-		.blur_with(6.0)
-		.threshold_with(120)
-		.processed()?;
-	mask.save("input-mask.png")?;
-
-	let vectorizer = VtracerSvgVectorizer; 
-	let svg = mask.trace(&vectorizer, &TraceOptions::default())?;
-	std::fs::write("input.svg", svg)?;
-
-	Ok(())
-}
-```	
-
-> VtracerSvgVectorizer is only available when the `vectorizer-vtracer` feature is enabled. You can use your own vectorizer by implementing the `SvgVectorizer` trait to avoid depending on VTracer directly.
+Resolution order: user value > environment variable > default (`model.onnx`).
 
 ### CLI Usage
 
-Use `outline <COMMAND> --help` to inspect the options of each subcommand.	
+Use `outline <COMMAND> --help` to inspect the options of each subcommand.
 
 #### Examples
+
 ```bash
 # Remove the background and export a foreground PNG
 outline cut input.jpg -o subject.png
@@ -65,15 +49,6 @@ outline trace input.jpg -o subject-raw-mask.svg
 # Generate an SVG outline with sticker-style processing
 outline trace input.jpg -o subject.svg \
 	--dilate 50.0 --fill-holes --blur 20.0
-```
-
-Run the CLI either directly or after building the release binary:
-
-```bash
-cargo run --release -- <command> <input> [options]
-# or build once and reuse
-cargo build --release
-./target/release/outline <command> <input> [options]
 ```
 
 <details>
@@ -138,11 +113,56 @@ The raw matte (soft mask) preserves the grayscale alpha predicted by the model. 
 
 </details>
 
+### Library Usage
+
+```bash
+cargo add outline-core --version 0.1.0-alpha.1
+# or use this if VtracerSvgVectorizer is needed:
+cargo add outline-core --version 0.1.0-alpha.1 --features vectorizer-vtracer
+```
+
+```rust
+use outline::{MaskProcessingOptions, Outline, TraceOptions, VtracerSvgVectorizer};
+
+fn generate_assets() -> outline::OutlineResult<()> {
+	let outline = Outline::new("model.onnx") // or: Outline::try_from_env()
+		.with_default_mask_processing(MaskProcessingOptions::default());
+	let session = outline.for_image("input.png")?;
+	let matte = session.matte();
+
+	// Compose the foreground directly from the raw matte (soft edges)
+	let foreground = matte.foreground()?;
+	foreground.save("input-foreground.png")?;
+
+	// Declare the desired mask steps, then apply them with `processed`.
+	let mask = matte
+		.clone()
+		.blur_with(6.0)
+		.threshold_with(120)
+		.processed()?;
+	mask.save("input-mask.png")?;
+
+	// Compose the foreground with processed mask (hard edges)
+	let foreground_processed = mask.foreground()?;
+	foreground_processed.save("input-foreground-processed.png")?;
+
+	let vectorizer = VtracerSvgVectorizer;
+	let svg = mask.trace(&vectorizer, &TraceOptions::default())?;
+	std::fs::write("input.svg", svg)?;
+
+	Ok(())
+}
+```
+
+> VtracerSvgVectorizer is only available when the `vectorizer-vtracer` feature is enabled. You can use your own vectorizer by implementing the `SvgVectorizer` trait to avoid depending on VTracer directly.
+
 ## Next Steps
+
 - Add detailed documentation for library API
 - Expose a WASM version of library API
 - Improve the CLI syntax for better usability and expressiveness
 - Provide a lightweight GUI for easier use.
 
 ## License
+
 Distributed under the MIT License. See `LICENSE` for details.

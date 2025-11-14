@@ -1,14 +1,23 @@
-pub mod config;
-pub mod error;
-pub mod foreground;
-pub mod inference;
-pub mod mask;
-pub mod vectorizer;
+#![cfg_attr(docsrs, feature(doc_cfg))]
 
-pub use config::{InferenceSettings, MaskProcessingOptions};
-pub use error::{OutlineError, OutlineResult};
+mod config;
+mod error;
+mod foreground;
+mod inference;
+mod mask;
+mod vectorizer;
+
+#[doc(inline)]
+pub use crate::config::{
+    DEFAULT_MODEL_PATH, ENV_MODEL_PATH, InferenceSettings, MaskProcessingOptions,
+};
+#[doc(inline)]
+pub use crate::error::{OutlineError, OutlineResult};
 pub use vectorizer::MaskVectorizer;
+
 #[cfg(feature = "vectorizer-vtracer")]
+#[cfg_attr(docsrs, doc(cfg(feature = "vectorizer-vtracer")))]
+#[doc(inline)]
 pub use vectorizer::vtracer::{TraceOptions, VtracerSvgVectorizer, trace_to_svg_string};
 
 use std::path::Path;
@@ -18,12 +27,15 @@ use std::sync::Arc;
 use image::imageops::FilterType;
 use image::{GrayImage, RgbImage, RgbaImage};
 
-use crate::config::{DEFAULT_MODEL_PATH, ENV_MODEL_PATH};
 use crate::foreground::compose_foreground;
 use crate::inference::run_matte_pipeline;
 use crate::mask::{MaskOperation, apply_operations, operations_from_options};
 
-/// Entry point for configuring and running matte extraction.
+/// Entry point for configuring and running background matting inference.
+///
+/// This is the main interface for loading an ONNX model and processing images to extract
+/// foreground subjects. Configure model path, inference settings, and default mask processing
+/// options, then call [`for_image`](Outline::for_image) to run inference on individual images.
 #[derive(Debug, Clone)]
 pub struct Outline {
     /// Inference settings for model and image handling.
@@ -103,7 +115,25 @@ impl Outline {
     }
 }
 
-/// Result of running the model for a single image, from which all artefacts can be derived.
+/// Inference result containing the original RGB image and raw matte prediction.
+///
+/// Returned by [`Outline::for_image`] after running model inference.
+///
+/// # Example
+/// ```no_run
+/// use outline::Outline;
+///
+/// let outline = Outline::new("model.onnx");
+/// let session = outline.for_image("input.jpg")?;
+///
+/// // Access the original image and raw matte directly
+/// let rgb = session.rgb_image();
+/// let raw_matte = session.raw_matte();
+///
+/// // Begin building a processing pipeline
+/// let matte = session.matte();
+/// # Ok::<_, outline::OutlineError>(())
+/// ```
 #[derive(Debug, Clone)]
 pub struct InferencedMatte {
     rgb_image: Arc<RgbImage>,
@@ -144,7 +174,27 @@ impl InferencedMatte {
     }
 }
 
-/// Builder-style handle for operating on the raw matte produced by the model.
+/// Builder for chaining mask processing operations on the raw matte.
+///
+/// The raw matte is the soft, grayscale alpha prediction from the model.
+///
+/// # Example
+/// ```no_run
+/// use outline::Outline;
+///
+/// let outline = Outline::new("model.onnx");
+/// let session = outline.for_image("input.jpg")?;
+///
+/// // Chain operations and execute them
+/// let mask = session.matte()
+///     .blur_with(6.0)          // Smooth edges
+///     .threshold_with(120)     // Convert to binary
+///     .dilate_with(5.0)        // Expand slightly
+///     .processed()?;           // Execute operations
+///
+/// mask.save("mask.png")?;
+/// # Ok::<_, outline::OutlineError>(())
+/// ```
 #[derive(Debug, Clone)]
 pub struct MatteHandle {
     rgb_image: Arc<RgbImage>,
@@ -197,6 +247,9 @@ impl MatteHandle {
     }
 
     /// Add a dilation operation using the default radius.
+    ///
+    /// **Note**: Dilation typically works best on binary masks. Consider calling
+    /// [`threshold`](MatteHandle::threshold) before `dilate` if working with a soft matte.
     pub fn dilate(mut self) -> Self {
         let radius = self.default_mask_processing.dilation_radius;
         self.operations.push(MaskOperation::Dilate { radius });
@@ -204,12 +257,18 @@ impl MatteHandle {
     }
 
     /// Add a dilation operation with a custom radius.
+    ///
+    /// **Note**: Dilation typically works best on binary masks. Consider calling
+    /// [`threshold`](MatteHandle::threshold) before `dilate` if working with a soft matte.
     pub fn dilate_with(mut self, radius: f32) -> Self {
         self.operations.push(MaskOperation::Dilate { radius });
         self
     }
 
     /// Add a hole-filling operation to the processing pipeline.
+    ///
+    /// **Note**: Hole-filling typically works best on binary masks. Consider calling
+    /// [`threshold`](MatteHandle::threshold) before `fill_holes` if working with a soft matte.
     pub fn fill_holes(mut self) -> Self {
         let threshold = self.default_mask_processing.mask_threshold;
         self.operations.push(MaskOperation::FillHoles { threshold });
@@ -263,7 +322,28 @@ impl MatteHandle {
     }
 }
 
-/// Represents a concrete mask image along with pending processing instructions.
+/// Processed mask image with optional further refinement and output generation.
+///
+/// Represents a concrete mask image (typically binary after thresholding) produced by executing
+/// operations from a [`MatteHandle`].
+///
+/// # Example
+/// ```no_run
+/// use outline::{Outline, VtracerSvgVectorizer, TraceOptions};
+///
+/// let outline = Outline::new("model.onnx");
+/// let session = outline.for_image("input.jpg")?;
+/// let mask = session.matte().blur().threshold().processed()?;
+///
+/// // Generate multiple outputs from the mask
+/// mask.save("mask.png")?;
+/// mask.foreground()?.save("subject.png")?;
+///
+/// let vectorizer = VtracerSvgVectorizer;
+/// let svg = mask.trace(&vectorizer, &TraceOptions::default())?;
+/// std::fs::write("outline.svg", svg)?;
+/// # Ok::<_, outline::OutlineError>(())
+/// ```
 #[derive(Debug, Clone)]
 pub struct MaskHandle {
     rgb_image: Arc<RgbImage>,
@@ -334,6 +414,9 @@ impl MaskHandle {
     }
 
     /// Add a dilation operation using the default radius.
+    ///
+    /// **Note**: Dilation typically works best on binary masks. If this mask is still grayscale,
+    /// consider calling [`threshold`](MaskHandle::threshold) first.
     pub fn dilate(mut self) -> Self {
         let radius = self.default_mask_processing.dilation_radius;
         self.operations.push(MaskOperation::Dilate { radius });
@@ -341,12 +424,18 @@ impl MaskHandle {
     }
 
     /// Add a dilation operation with a custom radius.
+    ///
+    /// **Note**: Dilation typically works best on binary masks. If this mask is still grayscale,
+    /// consider calling [`threshold`](MaskHandle::threshold) first.
     pub fn dilate_with(mut self, radius: f32) -> Self {
         self.operations.push(MaskOperation::Dilate { radius });
         self
     }
 
     /// Add a hole-filling operation to the processing pipeline.
+    ///
+    /// **Note**: Hole-filling typically works best on binary masks. If this mask is still grayscale,
+    /// consider calling [`threshold`](MaskHandle::threshold) first.
     pub fn fill_holes(mut self) -> Self {
         let threshold = self.default_mask_processing.mask_threshold;
         self.operations.push(MaskOperation::FillHoles { threshold });
@@ -400,6 +489,32 @@ impl MaskHandle {
     }
 }
 
+/// Composed RGBA foreground image with transparent background.
+///
+/// Final output produced by composing the original RGB image with a mask as the alpha channel.
+/// The mask's grayscale values map to alpha, producing smooth or hard edges depending on processing.
+/// Obtain by calling [`foreground`](MatteHandle::foreground) on a [`MatteHandle`] or [`MaskHandle`].
+///
+/// # Example
+/// ```no_run
+/// use outline::Outline;
+///
+/// let outline = Outline::new("model.onnx");
+/// let session = outline.for_image("input.jpg")?;
+///
+/// // Soft edges from raw matte
+/// let soft = session.matte().foreground()?;
+/// soft.save("soft-cutout.png")?;
+///
+/// // Hard edges from processed mask
+/// let hard = session.matte()
+///     .blur()
+///     .threshold()
+///     .processed()?
+///     .foreground()?;
+/// hard.save("hard-cutout.png")?;
+/// # Ok::<_, outline::OutlineError>(())
+/// ```
 pub struct ForegroundHandle {
     image: RgbaImage,
 }

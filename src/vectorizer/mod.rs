@@ -12,6 +12,3 @@ pub trait MaskVectorizer {
 
 #[cfg(feature = "vectorizer-vtracer")]
 pub mod vtracer;
-
-#[cfg(feature = "vectorizer-vtracer")]
-pub use vtracer::{TraceOptions, VtracerSvgVectorizer, trace_to_svg_string};
