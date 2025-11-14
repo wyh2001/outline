@@ -1,17 +1,23 @@
-#![doc = include_str!("../README.md")]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
-pub mod config;
-pub mod error;
-pub mod foreground;
-pub mod inference;
-pub mod mask;
-pub mod vectorizer;
+mod config;
+mod error;
+mod foreground;
+mod inference;
+mod mask;
+mod vectorizer;
 
-pub use config::{InferenceSettings, MaskProcessingOptions};
-pub use error::{OutlineError, OutlineResult};
+#[doc(inline)]
+pub use crate::config::{
+    DEFAULT_MODEL_PATH, ENV_MODEL_PATH, InferenceSettings, MaskProcessingOptions,
+};
+#[doc(inline)]
+pub use crate::error::{OutlineError, OutlineResult};
 pub use vectorizer::MaskVectorizer;
+
 #[cfg(feature = "vectorizer-vtracer")]
+#[cfg_attr(docsrs, doc(cfg(feature = "vectorizer-vtracer")))]
+#[doc(inline)]
 pub use vectorizer::vtracer::{TraceOptions, VtracerSvgVectorizer, trace_to_svg_string};
 
 use std::path::Path;
@@ -21,7 +27,6 @@ use std::sync::Arc;
 use image::imageops::FilterType;
 use image::{GrayImage, RgbImage, RgbaImage};
 
-use crate::config::{DEFAULT_MODEL_PATH, ENV_MODEL_PATH};
 use crate::foreground::compose_foreground;
 use crate::inference::run_matte_pipeline;
 use crate::mask::{MaskOperation, apply_operations, operations_from_options};
@@ -403,6 +408,10 @@ impl MaskHandle {
     }
 }
 
+/// Handle for a composed RGBA foreground image with transparent background.
+///
+/// This is the final output after composing the original RGB image with a mask
+/// as the alpha channel, producing a subject with transparent background.
 pub struct ForegroundHandle {
     image: RgbaImage,
 }

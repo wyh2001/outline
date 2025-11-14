@@ -1,6 +1,6 @@
 # Outline
 
-Outline is a background remover with a flexible mask-processing pipeline and a built-in SVG tracing workflow.  
+Outline is a background remover with a flexible mask-processing pipeline and a built-in SVG tracing workflow.
 
 It is written in Rust, powered by ONNX Runtime (ort) and VTracer, and works with U2-Net, BiRefNet, and other ONNX models that share a similar input/output shape.
 
@@ -14,9 +14,10 @@ cargo install outline-core --version 0.1.0-alpha.1
 
 ## Usage
 
-Outline supports being used as a library or via a command-line interface (CLI). 
+Outline supports being used as a library or via a command-line interface (CLI).
 
 Before using, specify your ONNX model path:
+
 - CLI flag: `-m, --model <path>`
 - Library API: `Outline::new(<path>)`
 - Environment variable: set `OUTLINE_MODEL_PATH`
@@ -25,9 +26,10 @@ Resolution order: user value > environment variable > default (`model.onnx`).
 
 ### CLI Usage
 
-Use `outline <COMMAND> --help` to inspect the options of each subcommand.	
+Use `outline <COMMAND> --help` to inspect the options of each subcommand.
 
 #### Examples
+
 ```bash
 # Remove the background and export a foreground PNG
 outline cut input.jpg -o subject.png
@@ -111,7 +113,6 @@ The raw matte (soft mask) preserves the grayscale alpha predicted by the model. 
 
 </details>
 
-
 ### Library Usage
 
 ```bash
@@ -137,7 +138,11 @@ fn generate_assets() -> outline::OutlineResult<()> {
 		.processed()?;
 	mask.save("input-mask.png")?;
 
-	let vectorizer = VtracerSvgVectorizer; 
+	// Compose the foreground with transparent background
+	let foreground = mask.foreground()?;
+	foreground.save("input-foreground.png")?;
+
+	let vectorizer = VtracerSvgVectorizer;
 	let svg = mask.trace(&vectorizer, &TraceOptions::default())?;
 	std::fs::write("input.svg", svg)?;
 
@@ -148,10 +153,12 @@ fn generate_assets() -> outline::OutlineResult<()> {
 > VtracerSvgVectorizer is only available when the `vectorizer-vtracer` feature is enabled. You can use your own vectorizer by implementing the `SvgVectorizer` trait to avoid depending on VTracer directly.
 
 ## Next Steps
+
 - Add detailed documentation for library API
 - Expose a WASM version of library API
 - Improve the CLI syntax for better usability and expressiveness
 - Provide a lightweight GUI for easier use.
 
 ## License
+
 Distributed under the MIT License. See `LICENSE` for details.

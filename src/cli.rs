@@ -24,9 +24,9 @@ pub struct GlobalOptions {
         short = 'm',
         long,
         global = true,
-        env = outline::config::ENV_MODEL_PATH,
+        env = outline::ENV_MODEL_PATH,
         value_hint = ValueHint::FilePath,
-        default_value = outline::config::DEFAULT_MODEL_PATH
+        default_value = outline::DEFAULT_MODEL_PATH
     )]
     pub model: PathBuf,
     /// Intra-op thread count for ORT (None to let ORT decide)

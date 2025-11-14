@@ -2,7 +2,10 @@ use std::path::PathBuf;
 
 use image::imageops::FilterType;
 
+/// Environment variable name for specifying the model path.
 pub const ENV_MODEL_PATH: &str = "OUTLINE_MODEL_PATH";
+
+/// Default model path used when no explicit path is provided.
 pub const DEFAULT_MODEL_PATH: &str = "model.onnx";
 
 /// Options for the model and input image.

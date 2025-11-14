@@ -1,7 +1,12 @@
 use thiserror::Error;
 
+/// Result type alias for operations that may fail with [`OutlineError`].
 pub type OutlineResult<T> = std::result::Result<T, OutlineError>;
 
+/// Error types that can occur during outline processing.
+///
+/// This enum covers errors from model inference, image I/O, mask processing,
+/// and vectorization operations.
 #[derive(Debug, Error)]
 pub enum OutlineError {
     #[error("ONNX Runtime error: {0}")]
