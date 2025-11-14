@@ -2,9 +2,8 @@ use std::collections::VecDeque;
 
 use image::{GrayImage, Luma};
 use imageproc::contrast::{ThresholdType, threshold as ip_threshold};
-use imageproc::distance_transform::Norm;
+use imageproc::distance_transform::euclidean_squared_distance_transform;
 use imageproc::filter::gaussian_blur_f32;
-use imageproc::morphology::dilate as ip_dilate;
 use ndarray::Array2;
 
 use crate::config::MaskProcessingOptions;
@@ -120,7 +119,16 @@ pub fn threshold_mask(gray: &GrayImage, thr: u8) -> GrayImage {
 }
 
 pub fn dilate_euclidean(mask_bin: &GrayImage, r: f32) -> GrayImage {
-    ip_dilate(mask_bin, Norm::L2, r.round() as u8)
+    let d2 = euclidean_squared_distance_transform(mask_bin);
+    let r2: f64 = (r as f64) * (r as f64);
+    let (w, h) = mask_bin.dimensions();
+    let mut out = GrayImage::new(w, h);
+    for (o_pixel, d2pixel) in out.pixels_mut().zip(d2.pixels()) {
+        let d2xy: f64 = d2pixel[0];
+        let v: u8 = if d2xy <= r2 { 255 } else { 0 };
+        *o_pixel = Luma([v]);
+    }
+    out
 }
 
 /// Fill holes in a binary mask using a flood-fill algorithm from the borders.
