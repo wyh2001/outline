@@ -23,19 +23,20 @@ pub struct GlobalOptions {
     #[arg(
         short = 'm',
         long,
-        env = outline::config::ENV_MODEL_PATH,
+        global = true,
+        env = outline::ENV_MODEL_PATH,
         value_hint = ValueHint::FilePath,
-        default_value = outline::config::DEFAULT_MODEL_PATH
+        default_value = outline::DEFAULT_MODEL_PATH
     )]
     pub model: PathBuf,
     /// Intra-op thread count for ORT (None to let ORT decide)
-    #[arg(long)]
+    #[arg(long, global = true)]
     pub intra_threads: Option<usize>,
     /// Filter used when resizing the input before inference
-    #[arg(long = "input-resample-filter", value_enum, default_value_t = ResampleFilter::Triangle)]
+    #[arg(long = "input-resample-filter", value_enum, default_value_t = ResampleFilter::Triangle, global = true)]
     pub input_resample_filter: ResampleFilter,
     /// Filter used when resizing the matte back to the original resolution
-    #[arg(long = "output-resample-filter", value_enum, default_value_t = ResampleFilter::Lanczos3)]
+    #[arg(long = "output-resample-filter", value_enum, default_value_t = ResampleFilter::Lanczos3, global = true)]
     pub output_resample_filter: ResampleFilter,
 }
 
@@ -125,7 +126,7 @@ pub struct TraceCommand {
 #[derive(Args, Debug)]
 pub struct MaskProcessingArgs {
     /// Enable gaussian blur before thresholding (optionally override sigma)
-    #[arg(long = "blur", value_name = "SIGMA", num_args = 0..=1, default_missing_value = "6.0", require_equals = true)]
+    #[arg(long = "blur", value_name = "SIGMA", num_args = 0..=1, default_missing_value = "6.0")]
     pub blur: Option<f32>,
     /// Threshold applied to the matte (0-255 or 0.0-1.0)
     #[arg(long = "mask-threshold", default_value_t = 120, value_parser = parse_mask_threshold)]
@@ -136,11 +137,10 @@ pub struct MaskProcessingArgs {
         value_enum,
         default_value_t = BinaryOption::Auto,
         num_args = 0..=1,
-        default_missing_value = "enabled",
-        require_equals = true
+        default_missing_value = "enabled"
     )]
     pub binary: BinaryOption,
-    #[arg(long = "dilate", value_name = "RADIUS", num_args = 0..=1, default_missing_value = "5.0", require_equals = true)]
+    #[arg(long = "dilate", value_name = "RADIUS", num_args = 0..=1, default_missing_value = "5.0")]
     pub dilate: Option<f32>,
     /// Fill enclosed holes in the mask before vectorization
     #[arg(long = "fill-holes")]

@@ -19,7 +19,29 @@ pub fn run(global: &GlobalOptions, cmd: TraceCommand) -> OutlineResult<()> {
         .clone()
         .unwrap_or_else(|| derive_svg_path(&cmd.input));
 
-    let options: TraceOptions = (&cmd.trace_options).into();
+    let default_opts = TraceOptions::default();
+    let tracer_path_precision = if cmd.trace_options.no_path_precision {
+        None
+    } else {
+        cmd.trace_options
+            .path_precision
+            .or(default_opts.tracer_path_precision)
+    };
+
+    let options = TraceOptions {
+        tracer_color_mode: cmd.trace_options.color_mode.into(),
+        tracer_hierarchical: cmd.trace_options.hierarchy.into(),
+        tracer_mode: cmd.trace_options.mode.into(),
+        tracer_filter_speckle: cmd.trace_options.filter_speckle,
+        tracer_color_precision: cmd.trace_options.color_precision,
+        tracer_layer_difference: cmd.trace_options.layer_difference,
+        tracer_corner_threshold: cmd.trace_options.corner_threshold,
+        tracer_length_threshold: cmd.trace_options.length_threshold,
+        tracer_max_iterations: cmd.trace_options.max_iterations,
+        tracer_splice_threshold: cmd.trace_options.splice_threshold,
+        tracer_path_precision,
+        invert_svg: cmd.trace_options.invert_svg,
+    };
 
     let vectorizer = VtracerSvgVectorizer;
     let processing_requested = processing_requested(&cmd.mask_processing);

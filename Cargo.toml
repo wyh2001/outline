@@ -3,6 +3,8 @@ name = "outline-core"
 version = "0.1.0-alpha.1"
 edition = "2024"
 repository = "https://github.com/wyh2001/outline"
+license = "MIT"
+description = "Image background removal with flexible mask processing options"
 
 [features]
 default = ["cli"]
@@ -12,6 +14,10 @@ vectorizer-vtracer = ["dep:vtracer", "dep:visioncortex"]
 [lib]
 name = "outline"
 path = "src/lib.rs"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
 image = "0.25.8"
