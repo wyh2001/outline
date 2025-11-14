@@ -39,9 +39,9 @@ pub fn determine_model_input_spec(session: &Session) -> ModelInputSpec {
 
 /// Infer the model input spec from the ONNX session input tensor shape.
 fn infer_model_input_spec(session: &Session) -> Option<ModelInputSpec> {
-    let input = session.inputs.get(0)?;
+    let input = session.inputs.first()?;
     let shape = input.input_type.tensor_shape()?;
-    let dims: &[i64] = &*shape;
+    let dims: &[i64] = shape;
 
     if dims.len() >= 4 {
         if let Some(spec) = infer_nchw_spec(dims) {
