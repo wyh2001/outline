@@ -130,6 +130,10 @@ fn generate_assets() -> outline::OutlineResult<()> {
 	let session = outline.for_image("input.png")?;
 	let matte = session.matte();
 
+	// Compose the foreground directly from the raw matte (soft edges)
+	let foreground = matte.foreground()?;
+	foreground.save("input-foreground.png")?;
+
 	// Declare the desired mask steps, then apply them with `processed`.
 	let mask = matte
 		.clone()
@@ -138,9 +142,9 @@ fn generate_assets() -> outline::OutlineResult<()> {
 		.processed()?;
 	mask.save("input-mask.png")?;
 
-	// Compose the foreground with transparent background
-	let foreground = mask.foreground()?;
-	foreground.save("input-foreground.png")?;
+	// Compose the foreground with processed mask (hard edges)
+	let foreground_processed = mask.foreground()?;
+	foreground_processed.save("input-foreground-processed.png")?;
 
 	let vectorizer = VtracerSvgVectorizer;
 	let svg = mask.trace(&vectorizer, &TraceOptions::default())?;
