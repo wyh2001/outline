@@ -4,6 +4,7 @@ mod config;
 mod error;
 mod foreground;
 mod inference;
+mod layer;
 mod mask;
 mod vectorizer;
 
@@ -13,6 +14,11 @@ pub use crate::config::{
 };
 #[doc(inline)]
 pub use crate::error::{OutlineError, OutlineResult};
+#[doc(inline)]
+pub use crate::layer::{
+    MaskAlphaMode, MaskFill, alpha_composite, create_rgba_layer_from_mask,
+    overlay_foreground_on_layer, overlay_image_on_mask,
+};
 pub use vectorizer::MaskVectorizer;
 
 #[cfg(feature = "vectorizer-vtracer")]
@@ -313,6 +319,12 @@ impl MatteHandle {
         Ok(ForegroundHandle { image: rgba })
     }
 
+    /// Fill the raw matte into a colored RGBA layer using the provided options.
+    pub fn fill_mask(&self, fill: MaskFill) -> ForegroundHandle {
+        let image = create_rgba_layer_from_mask(self.raw_matte.as_ref(), fill);
+        ForegroundHandle { image }
+    }
+
     /// Trace the raw matte using the specified vectorizer and options.
     pub fn trace<V>(&self, vectorizer: &V, options: &V::Options) -> OutlineResult<V::Output>
     where
@@ -478,6 +490,12 @@ impl MaskHandle {
     pub fn foreground(&self) -> OutlineResult<ForegroundHandle> {
         let rgba = compose_foreground(self.rgb_image.as_ref(), &self.mask)?;
         Ok(ForegroundHandle { image: rgba })
+    }
+
+    /// Fill this mask into a colored RGBA layer using the provided options.
+    pub fn fill_mask(&self, fill: MaskFill) -> ForegroundHandle {
+        let image = create_rgba_layer_from_mask(&self.mask, fill);
+        ForegroundHandle { image }
     }
 
     /// Trace the current mask using the specified vectorizer and options.
