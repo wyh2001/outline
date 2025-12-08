@@ -48,6 +48,8 @@ pub enum Commands {
     Cut(CutCommand),
     /// Trace the subject into an SVG outline
     Trace(TraceCommand),
+    /// Compose foreground over a filled background layer
+    Compose(ComposeCommand),
 }
 
 /// Resampling filters for image resizing.
@@ -124,6 +126,63 @@ pub struct TraceCommand {
 }
 
 #[derive(Args, Debug)]
+pub struct ComposeCommand {
+    /// Input image path
+    pub input: PathBuf,
+
+    /// Output path (defaults to `<name>-composite.png`)
+    #[arg(short, long)]
+    pub output: Option<PathBuf>,
+
+    // Background layer options
+    /// Background fill color (#RGB, #RRGGBB, #RRGGBBAA, r,g,b, or r,g,b,a)
+    #[arg(long = "bg-color", default_value = "#FFFFFFFF", value_parser = parse_rgba_color)]
+    pub bg_color: [u8; 4],
+
+    /// Background layer alpha mode
+    #[arg(long = "bg-alpha-mode", value_enum, default_value_t = BgAlphaModeArg::UseMask)]
+    pub bg_alpha_mode: BgAlphaModeArg,
+
+    /// Scale factor for Scale alpha mode
+    #[arg(long = "bg-alpha-scale", default_value_t = 1.0)]
+    pub bg_alpha_scale: f32,
+
+    /// Fixed alpha for Solid alpha mode (0-255)
+    #[arg(long = "bg-solid-alpha", default_value_t = 255)]
+    pub bg_solid_alpha: u8,
+
+    /// Which mask to use for background layer (default: auto -> processed if processing requested)
+    #[arg(long = "bg-mask-source", value_enum, default_value_t = MaskSourceArg::Auto)]
+    pub bg_mask_source: MaskSourceArg,
+
+    // Foreground options
+    /// Which mask to use for foreground alpha (default: auto -> raw for soft edges)
+    #[arg(long = "fg-mask-source", value_enum, default_value_t = MaskSourceArg::Auto)]
+    pub fg_mask_source: MaskSourceArg,
+
+    // Shared mask processing
+    #[command(flatten)]
+    pub mask_processing: MaskProcessingArgs,
+
+    // Optional exports
+    /// Export foreground PNG
+    #[arg(long = "export-foreground", value_name = "PATH", num_args = 0..=1)]
+    pub export_foreground: Option<Option<PathBuf>>,
+
+    /// Export raw matte PNG
+    #[arg(long = "export-matte", value_name = "PATH", num_args = 0..=1)]
+    pub export_matte: Option<Option<PathBuf>>,
+
+    /// Export processed mask PNG
+    #[arg(long = "export-mask", value_name = "PATH", num_args = 0..=1)]
+    pub export_mask: Option<Option<PathBuf>>,
+
+    /// Export background layer PNG
+    #[arg(long = "export-bg-layer", value_name = "PATH", num_args = 0..=1)]
+    pub export_bg_layer: Option<Option<PathBuf>>,
+}
+
+#[derive(Args, Debug)]
 pub struct MaskProcessingArgs {
     /// Enable gaussian blur before thresholding (optionally override sigma)
     #[arg(long = "blur", value_name = "SIGMA", num_args = 0..=1, default_missing_value = "6.0")]
@@ -194,6 +253,84 @@ fn parse_mask_threshold(value: &str) -> Result<u8, String> {
     ))
 }
 
+/// Parse an RGBA color from string.
+/// Supported formats: #RGB, #RRGGBB, #RRGGBBAA, r,g,b, r,g,b,a
+fn parse_rgba_color(s: &str) -> Result<[u8; 4], String> {
+    let s = s.trim();
+    if let Some(hex) = s.strip_prefix('#') {
+        parse_hex_color(hex)
+    } else {
+        parse_csv_color(s)
+    }
+}
+
+/// Parse a single hex byte from a slice, optionally expanding single chars (e.g., "F" -> "FF").
+fn parse_hex_byte(hex: &str, start: usize, len: usize) -> Result<u8, String> {
+    let slice = &hex[start..start + len];
+    let expanded = if len == 1 {
+        // #RGB format: expand single char to double (e.g., "F" -> "FF")
+        [slice, slice].concat()
+    } else {
+        slice.to_string()
+    };
+    u8::from_str_radix(&expanded, 16).map_err(|_| format!("invalid hex digit in color: {}", slice))
+}
+
+fn parse_hex_color(hex: &str) -> Result<[u8; 4], String> {
+    // Validate ASCII before byte-slicing to avoid panic on multi-byte UTF-8 characters
+    if !hex.is_ascii() {
+        return Err("hex color must contain only ASCII characters".to_string());
+    }
+
+    match hex.len() {
+        3 => Ok([
+            parse_hex_byte(hex, 0, 1)?,
+            parse_hex_byte(hex, 1, 1)?,
+            parse_hex_byte(hex, 2, 1)?,
+            255,
+        ]),
+        6 => Ok([
+            parse_hex_byte(hex, 0, 2)?,
+            parse_hex_byte(hex, 2, 2)?,
+            parse_hex_byte(hex, 4, 2)?,
+            255,
+        ]),
+        8 => Ok([
+            parse_hex_byte(hex, 0, 2)?,
+            parse_hex_byte(hex, 2, 2)?,
+            parse_hex_byte(hex, 4, 2)?,
+            parse_hex_byte(hex, 6, 2)?,
+        ]),
+        _ => Err(format!(
+            "invalid hex color length: expected 3, 6, or 8, got {}",
+            hex.len()
+        )),
+    }
+}
+
+fn parse_csv_color(s: &str) -> Result<[u8; 4], String> {
+    let parts: Vec<&str> = s.split(',').map(|p| p.trim()).collect();
+
+    let parse = |p: &str, name: &str| -> Result<u8, String> {
+        p.parse()
+            .map_err(|_| format!("invalid {} component: {}", name, p))
+    };
+
+    match parts.as_slice() {
+        [r, g, b] => Ok([parse(r, "R")?, parse(g, "G")?, parse(b, "B")?, 255]),
+        [r, g, b, a] => Ok([
+            parse(r, "R")?,
+            parse(g, "G")?,
+            parse(b, "B")?,
+            parse(a, "A")?,
+        ]),
+        _ => Err(format!(
+            "expected 3 or 4 color components (r,g,b or r,g,b,a), got {}",
+            parts.len()
+        )),
+    }
+}
+
 /// The argument to specify if binary mask processing is enabled.
 #[derive(Clone, Copy, Debug, ValueEnum, PartialEq, Eq)]
 pub enum BinaryOption {
@@ -216,6 +353,18 @@ pub enum MaskSourceArg {
     Raw,
     Processed,
     Auto,
+}
+
+/// Alpha mode for background layer fill in compose command.
+#[derive(Clone, Copy, Debug, Default, ValueEnum)]
+pub enum BgAlphaModeArg {
+    /// Use the mask value directly as alpha.
+    #[default]
+    UseMask,
+    /// Scale the mask alpha by a factor.
+    Scale,
+    /// Treat any non-zero mask value as a solid alpha.
+    Solid,
 }
 
 /// Tracing color modes for SVG vectorization.

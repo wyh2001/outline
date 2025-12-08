@@ -28,6 +28,20 @@ pub fn derive_variant_path(input: &Path, suffix: &str, extension: &str) -> PathB
     derived
 }
 
+/// Resolve an export path from an optional double-Option field.
+/// Returns Some(path) if export is requested, None otherwise.
+pub fn resolve_export_path(
+    opt: &Option<Option<PathBuf>>,
+    input: &Path,
+    suffix: &str,
+) -> Option<PathBuf> {
+    opt.as_ref().map(|inner| {
+        inner
+            .clone()
+            .unwrap_or_else(|| derive_variant_path(input, suffix, "png"))
+    })
+}
+
 /// Derive an SVG file path by changing the extension to "svg".
 pub fn derive_svg_path(input: &Path) -> PathBuf {
     let mut path = input.to_path_buf();
