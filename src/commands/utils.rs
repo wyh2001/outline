@@ -41,9 +41,15 @@ pub fn processing_requested(args: &MaskProcessingArgs) -> bool {
     derived != MaskProcessingOptions::default()
 }
 
+/// Check if there's a conflict between soft mask mode and operations that assume hard masks.
+/// Returns true if --no-binary is set but dilation or fill-holes are requested.
+pub fn has_soft_conflict(args: &MaskProcessingArgs) -> bool {
+    args.binary == BinaryOption::Disabled && (args.dilate.is_some() || args.fill_holes)
+}
+
 /// Emit a warning when dilation/fill-holes are requested but thresholding is disabled.
 pub fn warn_if_soft_conflict(args: &MaskProcessingArgs, context: &str) {
-    if args.binary == BinaryOption::Disabled && (args.dilate.is_some() || args.fill_holes) {
+    if has_soft_conflict(args) {
         eprintln!(
             "Warning: --no-binary disables thresholding, but dilation/fill-holes assume a hard mask; {} may be unexpected.",
             context
@@ -96,5 +102,254 @@ pub fn resolve_mask_export_source(
             }
         }
         other => other,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    mod derive_variant_path {
+        use super::*;
+
+        #[test]
+        fn basic() {
+            let input = Path::new("/path/to/image.png");
+            let result = derive_variant_path(input, "matte", "png");
+            assert_eq!(result, PathBuf::from("/path/to/image-matte.png"));
+        }
+
+        #[test]
+        fn different_extension() {
+            let input = Path::new("/path/to/photo.jpg");
+            let result = derive_variant_path(input, "mask", "png");
+            assert_eq!(result, PathBuf::from("/path/to/photo-mask.png"));
+        }
+
+        #[test]
+        fn no_extension() {
+            let input = Path::new("/path/to/image");
+            let result = derive_variant_path(input, "foreground", "png");
+            assert_eq!(result, PathBuf::from("/path/to/image-foreground.png"));
+        }
+
+        #[test]
+        fn relative_path() {
+            let input = Path::new("image.png");
+            let result = derive_variant_path(input, "composite", "png");
+            assert_eq!(result, PathBuf::from("image-composite.png"));
+        }
+
+        #[test]
+        fn multi_dot_name() {
+            // file_stem() returns "archive.tar", not "archive"
+            let input = Path::new("/path/to/archive.tar.gz");
+            let result = derive_variant_path(input, "mask", "png");
+            assert_eq!(result, PathBuf::from("/path/to/archive.tar-mask.png"));
+        }
+    }
+
+    mod resolve_export_path {
+        use super::*;
+
+        #[test]
+        fn none_returns_none() {
+            let opt: Option<Option<PathBuf>> = None;
+            let input = Path::new("/path/to/image.png");
+            let result = resolve_export_path(&opt, input, "matte");
+            assert_eq!(result, None);
+        }
+
+        #[test]
+        fn some_none_uses_default() {
+            let opt: Option<Option<PathBuf>> = Some(None);
+            let input = Path::new("/path/to/image.png");
+            let result = resolve_export_path(&opt, input, "matte");
+            assert_eq!(result, Some(PathBuf::from("/path/to/image-matte.png")));
+        }
+
+        #[test]
+        fn some_some_uses_custom() {
+            let custom_path = PathBuf::from("/custom/output.png");
+            let opt: Option<Option<PathBuf>> = Some(Some(custom_path.clone()));
+            let input = Path::new("/path/to/image.png");
+            let result = resolve_export_path(&opt, input, "matte");
+            assert_eq!(result, Some(custom_path));
+        }
+
+        #[test]
+        fn different_suffixes() {
+            let opt: Option<Option<PathBuf>> = Some(None);
+            let input = Path::new("photo.jpg");
+
+            assert_eq!(
+                resolve_export_path(&opt, input, "foreground"),
+                Some(PathBuf::from("photo-foreground.png"))
+            );
+            assert_eq!(
+                resolve_export_path(&opt, input, "mask"),
+                Some(PathBuf::from("photo-mask.png"))
+            );
+            assert_eq!(
+                resolve_export_path(&opt, input, "bg-layer"),
+                Some(PathBuf::from("photo-bg-layer.png"))
+            );
+        }
+    }
+
+    mod derive_svg_path {
+        use super::*;
+
+        #[test]
+        fn changes_extension() {
+            let input = Path::new("/path/to/image.png");
+            let result = derive_svg_path(input);
+            assert_eq!(result, PathBuf::from("/path/to/image.svg"));
+        }
+
+        #[test]
+        fn no_extension() {
+            let input = Path::new("/path/to/image");
+            let result = derive_svg_path(input);
+            assert_eq!(result, PathBuf::from("/path/to/image.svg"));
+        }
+    }
+
+    mod resolve_alpha_source {
+        use super::*;
+
+        #[test]
+        fn auto_with_processing() {
+            let result = resolve_alpha_source(AlphaFromArg::Auto, true);
+            assert!(matches!(result, AlphaFromArg::Processed));
+        }
+
+        #[test]
+        fn auto_without_processing() {
+            let result = resolve_alpha_source(AlphaFromArg::Auto, false);
+            assert!(matches!(result, AlphaFromArg::Raw));
+        }
+
+        #[test]
+        fn explicit_raw() {
+            let result = resolve_alpha_source(AlphaFromArg::Raw, true);
+            assert!(matches!(result, AlphaFromArg::Raw));
+        }
+
+        #[test]
+        fn explicit_processed() {
+            let result = resolve_alpha_source(AlphaFromArg::Processed, false);
+            assert!(matches!(result, AlphaFromArg::Processed));
+        }
+    }
+
+    mod resolve_mask_source_arg {
+        use super::*;
+
+        #[test]
+        fn auto_with_processing() {
+            let result = resolve_mask_source_arg(MaskSourceArg::Auto, true);
+            assert!(matches!(result, MaskSourceArg::Processed));
+        }
+
+        #[test]
+        fn auto_without_processing() {
+            let result = resolve_mask_source_arg(MaskSourceArg::Auto, false);
+            assert!(matches!(result, MaskSourceArg::Raw));
+        }
+
+        #[test]
+        fn explicit_raw() {
+            let result = resolve_mask_source_arg(MaskSourceArg::Raw, true);
+            assert!(matches!(result, MaskSourceArg::Raw));
+        }
+
+        #[test]
+        fn explicit_processed() {
+            let result = resolve_mask_source_arg(MaskSourceArg::Processed, false);
+            assert!(matches!(result, MaskSourceArg::Processed));
+        }
+    }
+
+    mod resolve_mask_export_source {
+        use super::*;
+
+        #[test]
+        fn auto_with_processing() {
+            let result = resolve_mask_export_source(MaskExportSource::Auto, true);
+            assert!(matches!(result, MaskExportSource::Processed));
+        }
+
+        #[test]
+        fn auto_without_processing() {
+            let result = resolve_mask_export_source(MaskExportSource::Auto, false);
+            assert!(matches!(result, MaskExportSource::Raw));
+        }
+
+        #[test]
+        fn explicit_raw() {
+            let result = resolve_mask_export_source(MaskExportSource::Raw, true);
+            assert!(matches!(result, MaskExportSource::Raw));
+        }
+
+        #[test]
+        fn explicit_processed() {
+            let result = resolve_mask_export_source(MaskExportSource::Processed, false);
+            assert!(matches!(result, MaskExportSource::Processed));
+        }
+    }
+
+    mod has_soft_conflict {
+        use super::*;
+
+        fn make_args(
+            binary: BinaryOption,
+            dilate: Option<f32>,
+            fill_holes: bool,
+        ) -> MaskProcessingArgs {
+            MaskProcessingArgs {
+                blur: None,
+                mask_threshold: 120,
+                binary,
+                dilate,
+                fill_holes,
+            }
+        }
+
+        #[test]
+        fn no_conflict_when_binary_enabled() {
+            let args = make_args(BinaryOption::Enabled, Some(5.0), true);
+            assert!(!has_soft_conflict(&args));
+        }
+
+        #[test]
+        fn no_conflict_when_binary_auto() {
+            let args = make_args(BinaryOption::Auto, Some(5.0), true);
+            assert!(!has_soft_conflict(&args));
+        }
+
+        #[test]
+        fn no_conflict_when_disabled_without_dilate_or_fill() {
+            let args = make_args(BinaryOption::Disabled, None, false);
+            assert!(!has_soft_conflict(&args));
+        }
+
+        #[test]
+        fn conflict_when_disabled_with_dilate() {
+            let args = make_args(BinaryOption::Disabled, Some(5.0), false);
+            assert!(has_soft_conflict(&args));
+        }
+
+        #[test]
+        fn conflict_when_disabled_with_fill_holes() {
+            let args = make_args(BinaryOption::Disabled, None, true);
+            assert!(has_soft_conflict(&args));
+        }
+
+        #[test]
+        fn conflict_when_disabled_with_both() {
+            let args = make_args(BinaryOption::Disabled, Some(5.0), true);
+            assert!(has_soft_conflict(&args));
+        }
     }
 }
