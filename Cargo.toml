@@ -20,11 +20,11 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
-image = "0.25.8"
+image = "0.25.9"
 ort = "2.0.0-rc.10"
-vtracer = { version = "0.6.4", optional = true }
+vtracer = { version = "0.6.5", optional = true }
 ndarray = "0.16.1"
-visioncortex = { version = "0.8.8", optional = true }
+visioncortex = { version = "0.8.9", optional = true }
 imageproc = "0.25.0"
 thiserror = "2"
 clap = { version = "4", features = ["derive", "env"], optional = true }
@@ -33,6 +33,9 @@ clap = { version = "4", features = ["derive", "env"], optional = true }
 name = "outline"
 path = "src/main.rs"
 required-features = ["cli"]
+
+[dev-dependencies]
+proptest = "1.9.0"
 
 # The profile that 'dist' will build with
 [profile.dist]
