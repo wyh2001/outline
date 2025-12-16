@@ -487,3 +487,950 @@ impl From<&TraceOptionsArgs> for TraceOptions {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    mod parse_hex_byte {
+        use super::*;
+
+        #[test]
+        fn single_char_expands() {
+            assert_eq!(parse_hex_byte("F", 0, 1).unwrap(), 0xFF);
+            assert_eq!(parse_hex_byte("0", 0, 1).unwrap(), 0x00);
+            assert_eq!(parse_hex_byte("A", 0, 1).unwrap(), 0xAA);
+        }
+
+        #[test]
+        fn double_char_parses() {
+            assert_eq!(parse_hex_byte("FF", 0, 2).unwrap(), 0xFF);
+            assert_eq!(parse_hex_byte("00", 0, 2).unwrap(), 0x00);
+            assert_eq!(parse_hex_byte("7F", 0, 2).unwrap(), 0x7F);
+        }
+
+        #[test]
+        fn case_insensitive() {
+            assert_eq!(parse_hex_byte("ff", 0, 2).unwrap(), 0xFF);
+            assert_eq!(parse_hex_byte("aB", 0, 2).unwrap(), 0xAB);
+        }
+
+        #[test]
+        fn offset_works() {
+            assert_eq!(parse_hex_byte("AABBCC", 2, 2).unwrap(), 0xBB);
+            assert_eq!(parse_hex_byte("AABBCC", 4, 2).unwrap(), 0xCC);
+        }
+
+        #[test]
+        fn invalid_hex_digit() {
+            assert!(parse_hex_byte("GG", 0, 2).is_err());
+            assert!(parse_hex_byte("ZZ", 0, 2).is_err());
+        }
+    }
+
+    mod parse_hex_color {
+        use super::*;
+
+        #[test]
+        fn short_format_rgb() {
+            assert_eq!(parse_hex_color("F00").unwrap(), [0xFF, 0x00, 0x00, 0xFF]);
+            assert_eq!(parse_hex_color("0F0").unwrap(), [0x00, 0xFF, 0x00, 0xFF]);
+            assert_eq!(parse_hex_color("00F").unwrap(), [0x00, 0x00, 0xFF, 0xFF]);
+            assert_eq!(parse_hex_color("FFF").unwrap(), [0xFF, 0xFF, 0xFF, 0xFF]);
+            assert_eq!(parse_hex_color("000").unwrap(), [0x00, 0x00, 0x00, 0xFF]);
+        }
+
+        #[test]
+        fn standard_format_rrggbb() {
+            assert_eq!(parse_hex_color("FF0000").unwrap(), [0xFF, 0x00, 0x00, 0xFF]);
+            assert_eq!(parse_hex_color("00FF00").unwrap(), [0x00, 0xFF, 0x00, 0xFF]);
+            assert_eq!(parse_hex_color("0000FF").unwrap(), [0x00, 0x00, 0xFF, 0xFF]);
+            assert_eq!(parse_hex_color("7F7F7F").unwrap(), [0x7F, 0x7F, 0x7F, 0xFF]);
+        }
+
+        #[test]
+        fn with_alpha_rrggbbaa() {
+            assert_eq!(
+                parse_hex_color("FF000080").unwrap(),
+                [0xFF, 0x00, 0x00, 0x80]
+            );
+            assert_eq!(
+                parse_hex_color("00FF00FF").unwrap(),
+                [0x00, 0xFF, 0x00, 0xFF]
+            );
+            assert_eq!(
+                parse_hex_color("00000000").unwrap(),
+                [0x00, 0x00, 0x00, 0x00]
+            );
+        }
+
+        #[test]
+        fn case_insensitive() {
+            assert_eq!(parse_hex_color("ff0000").unwrap(), [0xFF, 0x00, 0x00, 0xFF]);
+            assert_eq!(parse_hex_color("aAbBcC").unwrap(), [0xAA, 0xBB, 0xCC, 0xFF]);
+        }
+
+        #[test]
+        fn invalid_length() {
+            assert!(parse_hex_color("F").is_err());
+            assert!(parse_hex_color("FF").is_err());
+            assert!(parse_hex_color("FFFF").is_err());
+            assert!(parse_hex_color("FFFFF").is_err());
+            assert!(parse_hex_color("FFFFFFF").is_err());
+            assert!(parse_hex_color("FFFFFFFFF").is_err());
+        }
+
+        #[test]
+        fn invalid_characters() {
+            assert!(parse_hex_color("GGG").is_err());
+            assert!(parse_hex_color("GGGGGG").is_err());
+            assert!(parse_hex_color("FF00GG").is_err());
+        }
+
+        #[test]
+        fn non_ascii_rejected() {
+            assert!(parse_hex_color("中文").is_err());
+            assert!(parse_hex_color("FF中文").is_err());
+        }
+    }
+
+    mod parse_csv_color {
+        use super::*;
+
+        #[test]
+        fn rgb_format() {
+            assert_eq!(parse_csv_color("255,0,0").unwrap(), [255, 0, 0, 255]);
+            assert_eq!(parse_csv_color("0,255,0").unwrap(), [0, 255, 0, 255]);
+            assert_eq!(parse_csv_color("0,0,255").unwrap(), [0, 0, 255, 255]);
+        }
+
+        #[test]
+        fn rgba_format() {
+            assert_eq!(parse_csv_color("255,0,0,128").unwrap(), [255, 0, 0, 128]);
+            assert_eq!(parse_csv_color("0,0,0,0").unwrap(), [0, 0, 0, 0]);
+        }
+
+        #[test]
+        fn whitespace_trimmed() {
+            assert_eq!(parse_csv_color("255, 0, 0").unwrap(), [255, 0, 0, 255]);
+            assert_eq!(parse_csv_color(" 255 , 0 , 0 ").unwrap(), [255, 0, 0, 255]);
+            assert_eq!(
+                parse_csv_color("255,  0,  0,  128").unwrap(),
+                [255, 0, 0, 128]
+            );
+        }
+
+        #[test]
+        fn boundary_values() {
+            assert_eq!(parse_csv_color("0,0,0").unwrap(), [0, 0, 0, 255]);
+            assert_eq!(
+                parse_csv_color("255,255,255").unwrap(),
+                [255, 255, 255, 255]
+            );
+            assert_eq!(
+                parse_csv_color("255,255,255,255").unwrap(),
+                [255, 255, 255, 255]
+            );
+        }
+
+        #[test]
+        fn invalid_component_count() {
+            assert!(parse_csv_color("255").is_err());
+            assert!(parse_csv_color("255,0").is_err());
+            assert!(parse_csv_color("255,0,0,0,0").is_err());
+        }
+
+        #[test]
+        fn overflow_rejected() {
+            assert!(parse_csv_color("256,0,0").is_err());
+            assert!(parse_csv_color("0,256,0").is_err());
+            assert!(parse_csv_color("0,0,256").is_err());
+            assert!(parse_csv_color("0,0,0,256").is_err());
+        }
+
+        #[test]
+        fn negative_rejected() {
+            assert!(parse_csv_color("-1,0,0").is_err());
+        }
+
+        #[test]
+        fn non_numeric_rejected() {
+            assert!(parse_csv_color("abc,0,0").is_err());
+            assert!(parse_csv_color("255,xyz,0").is_err());
+        }
+    }
+
+    mod parse_rgba_color {
+        use super::*;
+
+        #[test]
+        fn hex_with_hash() {
+            assert_eq!(
+                parse_rgba_color("#FF0000").unwrap(),
+                [0xFF, 0x00, 0x00, 0xFF]
+            );
+            assert_eq!(parse_rgba_color("#F00").unwrap(), [0xFF, 0x00, 0x00, 0xFF]);
+            assert_eq!(
+                parse_rgba_color("#FF000080").unwrap(),
+                [0xFF, 0x00, 0x00, 0x80]
+            );
+        }
+
+        #[test]
+        fn csv_without_hash() {
+            assert_eq!(parse_rgba_color("255,0,0").unwrap(), [255, 0, 0, 255]);
+            assert_eq!(parse_rgba_color("255,0,0,128").unwrap(), [255, 0, 0, 128]);
+        }
+
+        #[test]
+        fn distinguishes_formats() {
+            // "FF0000" without # is treated as CSV (and fails)
+            assert!(parse_rgba_color("FF0000").is_err());
+            // "#255,0,0" with # is treated as hex (and fails)
+            assert!(parse_rgba_color("#255,0,0").is_err());
+        }
+
+        #[test]
+        fn trims_whitespace() {
+            assert_eq!(
+                parse_rgba_color("  #FF0000  ").unwrap(),
+                [0xFF, 0x00, 0x00, 0xFF]
+            );
+            assert_eq!(parse_rgba_color("  255,0,0  ").unwrap(), [255, 0, 0, 255]);
+        }
+
+        #[test]
+        fn empty_and_edge_inputs() {
+            assert!(parse_rgba_color("").is_err());
+            assert!(parse_rgba_color("#").is_err());
+            assert!(parse_rgba_color("   ").is_err());
+        }
+    }
+
+    mod parse_mask_threshold {
+        use super::*;
+
+        #[test]
+        fn integer_values() {
+            assert_eq!(parse_mask_threshold("0").unwrap(), 0);
+            assert_eq!(parse_mask_threshold("128").unwrap(), 128);
+            assert_eq!(parse_mask_threshold("255").unwrap(), 255);
+        }
+
+        #[test]
+        fn float_zero_to_one_scaled() {
+            assert_eq!(parse_mask_threshold("0.0").unwrap(), 0);
+            assert_eq!(parse_mask_threshold("1.0").unwrap(), 255);
+            assert_eq!(parse_mask_threshold("0.5").unwrap(), 128);
+            // 0.25 * 255 = 63.75, rounds to 64
+            assert_eq!(parse_mask_threshold("0.25").unwrap(), 64);
+        }
+
+        #[test]
+        fn integer_as_float() {
+            // "120.0" should be treated as integer 120
+            assert_eq!(parse_mask_threshold("120.0").unwrap(), 120);
+            assert_eq!(parse_mask_threshold("255.0").unwrap(), 255);
+            assert_eq!(parse_mask_threshold("0.0").unwrap(), 0);
+        }
+
+        #[test]
+        fn out_of_range_rejected() {
+            assert!(parse_mask_threshold("256").is_err());
+            assert!(parse_mask_threshold("-1").is_err());
+            assert!(parse_mask_threshold("1.1").is_err());
+            assert!(parse_mask_threshold("-0.1").is_err());
+            assert!(parse_mask_threshold("255.5").is_err());
+        }
+
+        #[test]
+        fn non_numeric_rejected() {
+            assert!(parse_mask_threshold("abc").is_err());
+            assert!(parse_mask_threshold("").is_err());
+            assert!(parse_mask_threshold("12a").is_err());
+        }
+
+        #[test]
+        fn integer_one_not_scaled() {
+            // "1" parses as u8 first, so it stays 1 (not scaled to 255)
+            assert_eq!(parse_mask_threshold("1").unwrap(), 1);
+        }
+    }
+
+    mod from_implementations {
+        use super::*;
+
+        #[test]
+        fn resample_filter_to_filter_type() {
+            assert!(matches!(
+                FilterType::from(ResampleFilter::Nearest),
+                FilterType::Nearest
+            ));
+            assert!(matches!(
+                FilterType::from(ResampleFilter::Triangle),
+                FilterType::Triangle
+            ));
+            assert!(matches!(
+                FilterType::from(ResampleFilter::CatmullRom),
+                FilterType::CatmullRom
+            ));
+            assert!(matches!(
+                FilterType::from(ResampleFilter::Gaussian),
+                FilterType::Gaussian
+            ));
+            assert!(matches!(
+                FilterType::from(ResampleFilter::Lanczos3),
+                FilterType::Lanczos3
+            ));
+        }
+
+        #[test]
+        fn tracer_color_mode_to_color_mode() {
+            assert!(matches!(
+                ColorMode::from(TracerColorMode::Color),
+                ColorMode::Color
+            ));
+            assert!(matches!(
+                ColorMode::from(TracerColorMode::Binary),
+                ColorMode::Binary
+            ));
+        }
+
+        #[test]
+        fn tracer_hierarchy_to_hierarchical() {
+            assert!(matches!(
+                Hierarchical::from(TracerHierarchy::Stacked),
+                Hierarchical::Stacked
+            ));
+            assert!(matches!(
+                Hierarchical::from(TracerHierarchy::Cutout),
+                Hierarchical::Cutout
+            ));
+        }
+
+        #[test]
+        fn tracer_mode_to_path_simplify_mode() {
+            assert!(matches!(
+                PathSimplifyMode::from(TracerMode::None),
+                PathSimplifyMode::None
+            ));
+            assert!(matches!(
+                PathSimplifyMode::from(TracerMode::Polygon),
+                PathSimplifyMode::Polygon
+            ));
+            assert!(matches!(
+                PathSimplifyMode::from(TracerMode::Spline),
+                PathSimplifyMode::Spline
+            ));
+        }
+    }
+
+    mod mask_processing_args_conversion {
+        use super::*;
+
+        fn default_args() -> MaskProcessingArgs {
+            MaskProcessingArgs {
+                blur: None,
+                mask_threshold: 120,
+                binary: BinaryOption::Auto,
+                dilate: None,
+                fill_holes: false,
+            }
+        }
+
+        #[test]
+        fn auto_no_dilate_no_fill_holes_yields_binary_false() {
+            let args = default_args();
+            let opts = MaskProcessingOptions::from(&args);
+            assert!(!opts.binary);
+        }
+
+        #[test]
+        fn auto_with_fill_holes_yields_binary_true() {
+            let args = MaskProcessingArgs {
+                fill_holes: true,
+                ..default_args()
+            };
+            let opts = MaskProcessingOptions::from(&args);
+            assert!(opts.binary);
+        }
+
+        #[test]
+        fn auto_with_dilate_yields_binary_true() {
+            let args = MaskProcessingArgs {
+                dilate: Some(5.0),
+                ..default_args()
+            };
+            let opts = MaskProcessingOptions::from(&args);
+            assert!(opts.binary);
+        }
+
+        #[test]
+        fn disabled_with_fill_holes_yields_binary_false() {
+            let args = MaskProcessingArgs {
+                binary: BinaryOption::Disabled,
+                fill_holes: true,
+                ..default_args()
+            };
+            let opts = MaskProcessingOptions::from(&args);
+            assert!(!opts.binary);
+        }
+
+        #[test]
+        fn enabled_always_yields_binary_true() {
+            let args = MaskProcessingArgs {
+                binary: BinaryOption::Enabled,
+                ..default_args()
+            };
+            let opts = MaskProcessingOptions::from(&args);
+            assert!(opts.binary);
+        }
+
+        #[test]
+        fn blur_flags_and_sigma() {
+            let args = MaskProcessingArgs {
+                blur: Some(10.0),
+                ..default_args()
+            };
+            let opts = MaskProcessingOptions::from(&args);
+            assert!(opts.blur);
+            assert!((opts.blur_sigma - 10.0).abs() < f32::EPSILON);
+        }
+
+        #[test]
+        fn dilate_flags_and_radius() {
+            let args = MaskProcessingArgs {
+                dilate: Some(8.0),
+                ..default_args()
+            };
+            let opts = MaskProcessingOptions::from(&args);
+            assert!(opts.dilate);
+            assert!((opts.dilation_radius - 8.0).abs() < f32::EPSILON);
+        }
+
+        #[test]
+        fn threshold_passed_through() {
+            let args = MaskProcessingArgs {
+                mask_threshold: 200,
+                ..default_args()
+            };
+            let opts = MaskProcessingOptions::from(&args);
+            assert_eq!(opts.mask_threshold, 200);
+        }
+    }
+
+    mod trace_options_args_conversion {
+        use super::*;
+
+        fn default_trace_args() -> TraceOptionsArgs {
+            TraceOptionsArgs {
+                color_mode: TracerColorMode::Binary,
+                hierarchy: TracerHierarchy::Stacked,
+                mode: TracerMode::Spline,
+                filter_speckle: 4,
+                color_precision: 6,
+                layer_difference: 16,
+                corner_threshold: 60,
+                length_threshold: 4.0,
+                max_iterations: 10,
+                splice_threshold: 45,
+                path_precision: None,
+                no_path_precision: false,
+                invert_svg: false,
+            }
+        }
+
+        #[test]
+        fn no_path_precision_clears_default() {
+            let args = TraceOptionsArgs {
+                no_path_precision: true,
+                ..default_trace_args()
+            };
+            let opts = TraceOptions::from(&args);
+            assert!(opts.tracer_path_precision.is_none());
+        }
+
+        #[test]
+        fn path_precision_overrides_default() {
+            let args = TraceOptionsArgs {
+                path_precision: Some(5),
+                ..default_trace_args()
+            };
+            let opts = TraceOptions::from(&args);
+            assert_eq!(opts.tracer_path_precision, Some(5));
+        }
+
+        #[test]
+        fn default_path_precision_used() {
+            let args = default_trace_args();
+            let opts = TraceOptions::from(&args);
+            let default_opts = TraceOptions::default();
+            assert_eq!(
+                opts.tracer_path_precision,
+                default_opts.tracer_path_precision
+            );
+        }
+
+        #[test]
+        fn invert_svg_passed_through() {
+            let args = TraceOptionsArgs {
+                invert_svg: true,
+                ..default_trace_args()
+            };
+            let opts = TraceOptions::from(&args);
+            assert!(opts.invert_svg);
+        }
+
+        #[test]
+        fn enum_fields_converted() {
+            let args = TraceOptionsArgs {
+                color_mode: TracerColorMode::Color,
+                hierarchy: TracerHierarchy::Cutout,
+                mode: TracerMode::Polygon,
+                ..default_trace_args()
+            };
+            let opts = TraceOptions::from(&args);
+            assert!(matches!(opts.tracer_color_mode, ColorMode::Color));
+            assert!(matches!(opts.tracer_hierarchical, Hierarchical::Cutout));
+            assert!(matches!(opts.tracer_mode, PathSimplifyMode::Polygon));
+        }
+
+        #[test]
+        fn conflicting_no_path_precision_and_path_precision() {
+            // clap prevents this via conflicts_with, but test pure function priority
+            let args = TraceOptionsArgs {
+                no_path_precision: true,
+                path_precision: Some(5),
+                ..default_trace_args()
+            };
+            let opts = TraceOptions::from(&args);
+            // no_path_precision takes priority
+            assert!(opts.tracer_path_precision.is_none());
+        }
+    }
+
+    mod parse_csv_color_edge_cases {
+        use super::*;
+
+        #[test]
+        fn trailing_comma_rejected() {
+            assert!(parse_csv_color("255,0,0,").is_err());
+        }
+
+        #[test]
+        fn empty_component_rejected() {
+            assert!(parse_csv_color("255,,0").is_err());
+            assert!(parse_csv_color(",0,0").is_err());
+            assert!(parse_csv_color("0,0,").is_err());
+        }
+
+        #[test]
+        fn only_commas_rejected() {
+            assert!(parse_csv_color(",,,").is_err());
+        }
+    }
+
+    mod parse_mask_threshold_rounding {
+        use super::*;
+
+        #[test]
+        fn rounding_near_half() {
+            // 0.499 * 255 = 127.245, rounds to 127
+            assert_eq!(parse_mask_threshold("0.499").unwrap(), 127);
+            // 0.501 * 255 = 127.755, rounds to 128
+            assert_eq!(parse_mask_threshold("0.501").unwrap(), 128);
+            // 0.5 * 255 = 127.5, rounds to 128 (round half up)
+            assert_eq!(parse_mask_threshold("0.5").unwrap(), 128);
+        }
+
+        #[test]
+        fn rounding_edge_cases() {
+            // 0.002 * 255 = 0.51, rounds to 1
+            assert_eq!(parse_mask_threshold("0.002").unwrap(), 1);
+            // 0.001 * 255 = 0.255, rounds to 0
+            assert_eq!(parse_mask_threshold("0.001").unwrap(), 0);
+            // 0.998 * 255 = 254.49, rounds to 254
+            assert_eq!(parse_mask_threshold("0.998").unwrap(), 254);
+            // 0.999 * 255 = 254.745, rounds to 255
+            assert_eq!(parse_mask_threshold("0.999").unwrap(), 255);
+        }
+    }
+
+    mod property_tests {
+        use super::*;
+        use proptest::prelude::*;
+
+        proptest! {
+            #[test]
+            fn short_hex_expands_to_full_hex(r in 0u8..16, g in 0u8..16, b in 0u8..16) {
+                let short = format!("{:X}{:X}{:X}", r, g, b);
+                let full = format!("{:X}{:X}{:X}{:X}{:X}{:X}", r, r, g, g, b, b);
+                let short_result = parse_hex_color(&short).unwrap();
+                let full_result = parse_hex_color(&full).unwrap();
+                prop_assert_eq!(short_result, full_result);
+            }
+
+            #[test]
+            fn float_0_to_1_always_parses_successfully(f in 0.0f32..=1.0f32) {
+                let s = format!("{:.6}", f);
+                let result = parse_mask_threshold(&s);
+                prop_assert!(result.is_ok());
+            }
+
+            #[test]
+            fn trim_idempotent_for_hex_color(
+                r in any::<u8>(),
+                g in any::<u8>(),
+                b in any::<u8>(),
+                leading in 0usize..5,
+                trailing in 0usize..5
+            ) {
+                let hex = format!("{:02X}{:02X}{:02X}", r, g, b);
+                let padded = format!(
+                    "{}#{}{}",
+                    " ".repeat(leading),
+                    hex,
+                    " ".repeat(trailing)
+                );
+                let clean_result = parse_rgba_color(&format!("#{}", hex)).unwrap();
+                let padded_result = parse_rgba_color(&padded).unwrap();
+                prop_assert_eq!(clean_result, padded_result);
+            }
+
+            #[test]
+            fn trim_idempotent_for_csv_color(
+                r in any::<u8>(),
+                g in any::<u8>(),
+                b in any::<u8>(),
+                leading in 0usize..5,
+                trailing in 0usize..5
+            ) {
+                let csv = format!("{},{},{}", r, g, b);
+                let padded = format!(
+                    "{}{}{}",
+                    " ".repeat(leading),
+                    csv,
+                    " ".repeat(trailing)
+                );
+                let clean_result = parse_rgba_color(&csv).unwrap();
+                let padded_result = parse_rgba_color(&padded).unwrap();
+                prop_assert_eq!(clean_result, padded_result);
+            }
+
+            #[test]
+            fn valid_u8_always_parses_as_threshold(v in 0u8..=255u8) {
+                let s = v.to_string();
+                let result = parse_mask_threshold(&s).unwrap();
+                prop_assert_eq!(result, v);
+            }
+        }
+    }
+
+    mod clap_integration {
+        use super::*;
+        use clap::Parser;
+        use std::path::Path;
+
+        macro_rules! parse_cmd {
+            ($args:expr, $variant:ident) => {{
+                let cli = Cli::try_parse_from($args).unwrap();
+                match cli.command {
+                    Commands::$variant(cmd) => cmd,
+                    _ => panic!("expected {} command", stringify!($variant)),
+                }
+            }};
+        }
+
+        // Option<Option<PathBuf>> three-state semantics
+        mod optional_path_semantics {
+            use super::*;
+
+            #[test]
+            fn export_matte_absent_is_none() {
+                let cmd = parse_cmd!(["outline", "cut", "in.png"], Cut);
+                assert!(cmd.export_matte.is_none());
+            }
+
+            #[test]
+            fn export_matte_flag_only_is_some_none() {
+                let cmd = parse_cmd!(["outline", "cut", "in.png", "--export-matte"], Cut);
+                assert!(matches!(cmd.export_matte, Some(None)));
+            }
+
+            #[test]
+            fn export_matte_with_path_is_some_some() {
+                let cmd = parse_cmd!(
+                    ["outline", "cut", "in.png", "--export-matte", "out.png"],
+                    Cut
+                );
+                assert!(matches!(&cmd.export_matte, Some(Some(p)) if p == Path::new("out.png")));
+            }
+
+            #[test]
+            fn export_mask_absent_is_none() {
+                let cmd = parse_cmd!(["outline", "cut", "in.png"], Cut);
+                assert!(cmd.export_mask.is_none());
+            }
+
+            #[test]
+            fn export_mask_flag_only_is_some_none() {
+                let cmd = parse_cmd!(["outline", "cut", "in.png", "--export-mask"], Cut);
+                assert!(matches!(cmd.export_mask, Some(None)));
+            }
+
+            #[test]
+            fn export_mask_with_path_is_some_some() {
+                let cmd = parse_cmd!(
+                    ["outline", "cut", "in.png", "--export-mask", "mask.png"],
+                    Cut
+                );
+                assert!(matches!(&cmd.export_mask, Some(Some(p)) if p == Path::new("mask.png")));
+            }
+        }
+
+        // default_missing_value behavior
+        mod default_missing_value {
+            use super::*;
+
+            #[test]
+            fn blur_flag_only_uses_default_sigma() {
+                let cmd = parse_cmd!(["outline", "mask", "in.png", "--blur"], Mask);
+                assert_eq!(cmd.mask_processing.blur, Some(6.0));
+            }
+
+            #[test]
+            fn blur_with_value_uses_provided() {
+                let cmd = parse_cmd!(["outline", "mask", "in.png", "--blur", "10.0"], Mask);
+                assert_eq!(cmd.mask_processing.blur, Some(10.0));
+            }
+
+            #[test]
+            fn binary_flag_only_becomes_enabled() {
+                let cmd = parse_cmd!(["outline", "mask", "in.png", "--binary"], Mask);
+                assert_eq!(cmd.mask_processing.binary, BinaryOption::Enabled);
+            }
+
+            #[test]
+            fn binary_disabled_explicit() {
+                let cmd = parse_cmd!(["outline", "mask", "in.png", "--binary", "disabled"], Mask);
+                assert_eq!(cmd.mask_processing.binary, BinaryOption::Disabled);
+            }
+
+            #[test]
+            fn dilate_flag_only_uses_default_radius() {
+                let cmd = parse_cmd!(["outline", "mask", "in.png", "--dilate"], Mask);
+                assert_eq!(cmd.mask_processing.dilate, Some(5.0));
+            }
+
+            #[test]
+            fn dilate_with_value_uses_provided() {
+                let cmd = parse_cmd!(["outline", "mask", "in.png", "--dilate", "8.0"], Mask);
+                assert_eq!(cmd.mask_processing.dilate, Some(8.0));
+            }
+        }
+
+        // conflicts_with behavior
+        mod conflicts_with {
+            use super::*;
+
+            #[test]
+            fn path_precision_and_no_path_precision_conflict() {
+                let result = Cli::try_parse_from([
+                    "outline",
+                    "trace",
+                    "in.png",
+                    "--path-precision",
+                    "5",
+                    "--no-path-precision",
+                ]);
+                assert!(result.is_err());
+            }
+
+            #[test]
+            fn path_precision_alone_ok() {
+                let cmd = parse_cmd!(
+                    ["outline", "trace", "in.png", "--path-precision", "5"],
+                    Trace
+                );
+                assert_eq!(cmd.trace_options.path_precision, Some(5));
+                assert!(!cmd.trace_options.no_path_precision);
+            }
+
+            #[test]
+            fn no_path_precision_alone_ok() {
+                let cmd = parse_cmd!(["outline", "trace", "in.png", "--no-path-precision"], Trace);
+                assert!(cmd.trace_options.no_path_precision);
+                assert!(cmd.trace_options.path_precision.is_none());
+            }
+        }
+
+        // Threshold value_parser
+        mod threshold_parsing {
+            use super::*;
+
+            #[test]
+            fn integer_threshold() {
+                let cmd = parse_cmd!(
+                    ["outline", "mask", "in.png", "--mask-threshold", "200"],
+                    Mask
+                );
+                assert_eq!(cmd.mask_processing.mask_threshold, 200);
+            }
+
+            #[test]
+            fn float_threshold_scaled() {
+                let cmd = parse_cmd!(
+                    ["outline", "mask", "in.png", "--mask-threshold", "0.5"],
+                    Mask
+                );
+                assert_eq!(cmd.mask_processing.mask_threshold, 128);
+            }
+
+            #[test]
+            fn invalid_threshold_rejected() {
+                let result =
+                    Cli::try_parse_from(["outline", "mask", "in.png", "--mask-threshold", "1.5"]);
+                assert!(result.is_err());
+            }
+        }
+
+        // Color value_parser
+        mod color_parsing {
+            use super::*;
+
+            #[test]
+            fn hex_color_parsed() {
+                let cmd = parse_cmd!(
+                    ["outline", "compose", "in.png", "--bg-color", "#FF0000"],
+                    Compose
+                );
+                assert_eq!(cmd.bg_color, [0xFF, 0x00, 0x00, 0xFF]);
+            }
+
+            #[test]
+            fn csv_color_parsed() {
+                let cmd = parse_cmd!(
+                    ["outline", "compose", "in.png", "--bg-color", "255,0,0"],
+                    Compose
+                );
+                assert_eq!(cmd.bg_color, [255, 0, 0, 255]);
+            }
+
+            #[test]
+            fn invalid_color_rejected() {
+                let result =
+                    Cli::try_parse_from(["outline", "compose", "in.png", "--bg-color", "invalid"]);
+                assert!(result.is_err());
+            }
+        }
+
+        // ValueEnum parsing for global options and compose command
+        mod value_enum_parsing {
+            use super::*;
+
+            #[test]
+            fn input_resample_filter_gaussian() {
+                let cli = Cli::try_parse_from([
+                    "outline",
+                    "mask",
+                    "in.png",
+                    "--input-resample-filter",
+                    "gaussian",
+                ])
+                .unwrap();
+                assert!(matches!(
+                    cli.global.input_resample_filter,
+                    ResampleFilter::Gaussian
+                ));
+            }
+
+            #[test]
+            fn output_resample_filter_nearest() {
+                let cli = Cli::try_parse_from([
+                    "outline",
+                    "mask",
+                    "in.png",
+                    "--output-resample-filter",
+                    "nearest",
+                ])
+                .unwrap();
+                assert!(matches!(
+                    cli.global.output_resample_filter,
+                    ResampleFilter::Nearest
+                ));
+            }
+
+            #[test]
+            fn resample_filter_all_variants() {
+                for (name, expected) in [
+                    ("nearest", ResampleFilter::Nearest),
+                    ("triangle", ResampleFilter::Triangle),
+                    ("catmull-rom", ResampleFilter::CatmullRom),
+                    ("gaussian", ResampleFilter::Gaussian),
+                    ("lanczos3", ResampleFilter::Lanczos3),
+                ] {
+                    let cli = Cli::try_parse_from([
+                        "outline",
+                        "mask",
+                        "in.png",
+                        "--input-resample-filter",
+                        name,
+                    ])
+                    .unwrap();
+                    assert!(
+                        matches!(cli.global.input_resample_filter, ref f if std::mem::discriminant(f) == std::mem::discriminant(&expected)),
+                        "failed for {name}"
+                    );
+                }
+            }
+
+            #[test]
+            fn bg_alpha_mode_scale() {
+                let cmd = parse_cmd!(
+                    ["outline", "compose", "in.png", "--bg-alpha-mode", "scale"],
+                    Compose
+                );
+                assert!(matches!(cmd.bg_alpha_mode, BgAlphaModeArg::Scale));
+            }
+
+            #[test]
+            fn bg_alpha_mode_solid() {
+                let cmd = parse_cmd!(
+                    ["outline", "compose", "in.png", "--bg-alpha-mode", "solid"],
+                    Compose
+                );
+                assert!(matches!(cmd.bg_alpha_mode, BgAlphaModeArg::Solid));
+            }
+
+            #[test]
+            fn bg_alpha_mode_use_mask_default() {
+                let cmd = parse_cmd!(["outline", "compose", "in.png"], Compose);
+                assert!(matches!(cmd.bg_alpha_mode, BgAlphaModeArg::UseMask));
+            }
+
+            #[test]
+            fn invalid_resample_filter_rejected() {
+                let result = Cli::try_parse_from([
+                    "outline",
+                    "mask",
+                    "in.png",
+                    "--input-resample-filter",
+                    "invalid",
+                ]);
+                assert!(result.is_err());
+            }
+
+            #[test]
+            fn invalid_bg_alpha_mode_rejected() {
+                let result = Cli::try_parse_from([
+                    "outline",
+                    "compose",
+                    "in.png",
+                    "--bg-alpha-mode",
+                    "invalid",
+                ]);
+                assert!(result.is_err());
+            }
+        }
+    }
+}
