@@ -84,6 +84,11 @@ pub fn create_rgba_layer_from_mask(mask: &GrayImage, fill: MaskFill) -> RgbaImag
 
 /// Alpha composite `top` over `bottom` (RGBA over operator).
 pub fn alpha_composite(bottom: &RgbaImage, top: &RgbaImage) -> RgbaImage {
+    debug_assert_eq!(
+        bottom.dimensions(),
+        top.dimensions(),
+        "alpha_composite requires bottom and top to have the same dimensions"
+    );
     let (w, h) = bottom.dimensions();
     let mut out = RgbaImage::new(w, h);
 
@@ -393,6 +398,163 @@ mod tests {
             let result = overlay_image_on_mask(&layer_mask, MaskFill::default(), &overlay);
             assert!(result.is_ok());
             assert_eq!(result.unwrap().dimensions(), (2, 2));
+        }
+    }
+
+    mod property_tests {
+        use super::*;
+        use proptest::prelude::*;
+
+        proptest! {
+            /// resolve_mask_alpha: UseMask mode always returns input unchanged
+            #[test]
+            fn resolve_mask_alpha_use_mask_passthrough(mask_value in proptest::num::u8::ANY) {
+                let result = resolve_mask_alpha(mask_value, MaskAlphaMode::UseMask);
+                prop_assert_eq!(result, mask_value);
+            }
+
+            /// resolve_mask_alpha: Scale mode with large scale still produces valid output
+            #[test]
+            fn resolve_mask_alpha_scale_handles_large_scale(
+                mask_value in proptest::num::u8::ANY,
+                scale in -10.0f32..10.0f32
+            ) {
+                let result = resolve_mask_alpha(mask_value, MaskAlphaMode::Scale(scale));
+                // mask_value==0 always outputs 0 regardless of scale
+                if mask_value == 0 {
+                    prop_assert_eq!(result, 0);
+                }
+                // With large positive scale and max input, result should clamp to 255
+                if scale >= 1.0 && mask_value == 255 {
+                    prop_assert_eq!(result, 255);
+                }
+                // With negative scale, result should be 0
+                if scale < 0.0 {
+                    prop_assert_eq!(result, 0);
+                }
+            }
+
+            /// resolve_mask_alpha: Solid mode returns alpha for nonzero, 0 otherwise
+            #[test]
+            fn resolve_mask_alpha_solid_binary_behavior(
+                mask_value in proptest::num::u8::ANY,
+                solid_alpha in proptest::num::u8::ANY
+            ) {
+                let result = resolve_mask_alpha(mask_value, MaskAlphaMode::Solid(solid_alpha));
+                if mask_value > 0 {
+                    prop_assert_eq!(result, solid_alpha);
+                } else {
+                    prop_assert_eq!(result, 0);
+                }
+            }
+
+            /// create_rgba_layer_from_mask: dimensions always preserved
+            #[test]
+            fn create_rgba_layer_dimensions_preserved(
+                w in 1u32..20,
+                h in 1u32..20,
+                mask_value in proptest::num::u8::ANY
+            ) {
+                let mask = GrayImage::from_pixel(w, h, image::Luma([mask_value]));
+                let result = create_rgba_layer_from_mask(&mask, MaskFill::default());
+                prop_assert_eq!(result.dimensions(), (w, h));
+            }
+
+            /// create_rgba_layer_from_mask: output alpha bounded by formula (mask_alpha * base_alpha / 255)
+            #[test]
+            fn create_rgba_layer_alpha_formula_correct(
+                mask_value in proptest::num::u8::ANY,
+                base_alpha in proptest::num::u8::ANY
+            ) {
+                let mask = GrayImage::from_pixel(1, 1, image::Luma([mask_value]));
+                let fill = MaskFill::new([255, 255, 255, base_alpha]);
+                let result = create_rgba_layer_from_mask(&mask, fill);
+                let out_alpha = result.get_pixel(0, 0).0[3];
+
+                let expected = ((mask_value as u16 * base_alpha as u16) / 255) as u8;
+                prop_assert_eq!(out_alpha, expected);
+            }
+
+            /// create_rgba_layer_from_mask: RGB channels match fill color
+            #[test]
+            fn create_rgba_layer_rgb_matches_fill(
+                r in proptest::num::u8::ANY,
+                g in proptest::num::u8::ANY,
+                b in proptest::num::u8::ANY
+            ) {
+                let mask = GrayImage::from_pixel(1, 1, image::Luma([128]));
+                let fill = MaskFill::new([r, g, b, 255]);
+                let result = create_rgba_layer_from_mask(&mask, fill);
+                let px = result.get_pixel(0, 0);
+
+                prop_assert_eq!(px.0[0], r);
+                prop_assert_eq!(px.0[1], g);
+                prop_assert_eq!(px.0[2], b);
+            }
+
+            /// alpha_composite: fully transparent top shows bottom unchanged (when bottom has alpha > 0)
+            #[test]
+            fn alpha_composite_transparent_top_shows_bottom(
+                r in proptest::num::u8::ANY,
+                g in proptest::num::u8::ANY,
+                b in proptest::num::u8::ANY,
+                a in 1u8..=255u8  // Non-zero alpha, since RGB is undefined when alpha=0
+            ) {
+                let bottom = RgbaImage::from_pixel(1, 1, Rgba([r, g, b, a]));
+                let top = RgbaImage::from_pixel(1, 1, Rgba([0, 0, 0, 0])); // Transparent
+                let result = alpha_composite(&bottom, &top);
+                let px = result.get_pixel(0, 0);
+
+                prop_assert_eq!(px.0, [r, g, b, a]);
+            }
+
+            /// alpha_composite: fully opaque top replaces bottom
+            #[test]
+            fn alpha_composite_opaque_top_replaces_bottom(
+                top_r in proptest::num::u8::ANY,
+                top_g in proptest::num::u8::ANY,
+                top_b in proptest::num::u8::ANY
+            ) {
+                let bottom = RgbaImage::from_pixel(1, 1, Rgba([100, 100, 100, 255]));
+                let top = RgbaImage::from_pixel(1, 1, Rgba([top_r, top_g, top_b, 255])); // Opaque
+                let result = alpha_composite(&bottom, &top);
+                let px = result.get_pixel(0, 0);
+
+                prop_assert_eq!(px.0, [top_r, top_g, top_b, 255]);
+            }
+
+            /// alpha_composite: dimensions always preserved
+            #[test]
+            fn alpha_composite_dimensions_preserved(
+                w in 1u32..20,
+                h in 1u32..20
+            ) {
+                let bottom = RgbaImage::from_pixel(w, h, Rgba([100, 100, 100, 255]));
+                let top = RgbaImage::from_pixel(w, h, Rgba([200, 200, 200, 128]));
+                let result = alpha_composite(&bottom, &top);
+
+                prop_assert_eq!(result.dimensions(), (w, h));
+            }
+
+            /// alpha_composite: result alpha follows "over" formula: fg_a + bg_a * (1 - fg_a)
+            #[test]
+            fn alpha_composite_result_alpha_follows_formula(
+                bg_a in proptest::num::u8::ANY,
+                fg_a in proptest::num::u8::ANY
+            ) {
+                let bottom = RgbaImage::from_pixel(1, 1, Rgba([100, 100, 100, bg_a]));
+                let top = RgbaImage::from_pixel(1, 1, Rgba([200, 200, 200, fg_a]));
+                let result = alpha_composite(&bottom, &top);
+                let out_alpha = result.get_pixel(0, 0).0[3];
+
+                // Expected: fg_a + bg_a * (1 - fg_a), normalized to [0, 255]
+                let fg_a_f = fg_a as f32 / 255.0;
+                let bg_a_f = bg_a as f32 / 255.0;
+                let expected_a = fg_a_f + bg_a_f * (1.0 - fg_a_f);
+                let expected = (expected_a * 255.0).round().clamp(0.0, 255.0) as u8;
+
+                prop_assert_eq!(out_alpha, expected);
+            }
         }
     }
 }
