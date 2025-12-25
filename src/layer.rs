@@ -185,36 +185,40 @@ mod tests {
     mod resolve_mask_alpha {
         use super::*;
 
-        #[test]
-        fn use_mask_passes_through() {
-            assert_eq!(resolve_mask_alpha(0, MaskAlphaMode::UseMask), 0);
-            assert_eq!(resolve_mask_alpha(128, MaskAlphaMode::UseMask), 128);
-            assert_eq!(resolve_mask_alpha(255, MaskAlphaMode::UseMask), 255);
-        }
+        mod unit {
+            use super::*;
 
-        #[test]
-        fn scale_by_half() {
-            assert_eq!(resolve_mask_alpha(0, MaskAlphaMode::Scale(0.5)), 0);
-            assert_eq!(resolve_mask_alpha(200, MaskAlphaMode::Scale(0.5)), 100);
-            assert_eq!(resolve_mask_alpha(255, MaskAlphaMode::Scale(0.5)), 128);
-        }
+            #[test]
+            fn use_mask_passes_through() {
+                assert_eq!(resolve_mask_alpha(0, MaskAlphaMode::UseMask), 0);
+                assert_eq!(resolve_mask_alpha(128, MaskAlphaMode::UseMask), 128);
+                assert_eq!(resolve_mask_alpha(255, MaskAlphaMode::UseMask), 255);
+            }
 
-        #[test]
-        fn scale_clamps_overflow() {
-            // 200 * 2.0 = 400, clamped to 255
-            assert_eq!(resolve_mask_alpha(200, MaskAlphaMode::Scale(2.0)), 255);
-        }
+            #[test]
+            fn scale_by_half() {
+                assert_eq!(resolve_mask_alpha(0, MaskAlphaMode::Scale(0.5)), 0);
+                assert_eq!(resolve_mask_alpha(200, MaskAlphaMode::Scale(0.5)), 100);
+                assert_eq!(resolve_mask_alpha(255, MaskAlphaMode::Scale(0.5)), 128);
+            }
 
-        #[test]
-        fn scale_negative_treated_as_zero() {
-            assert_eq!(resolve_mask_alpha(255, MaskAlphaMode::Scale(-1.0)), 0);
-        }
+            #[test]
+            fn scale_clamps_overflow() {
+                // 200 * 2.0 = 400, clamped to 255
+                assert_eq!(resolve_mask_alpha(200, MaskAlphaMode::Scale(2.0)), 255);
+            }
 
-        #[test]
-        fn solid_returns_alpha_for_nonzero() {
-            assert_eq!(resolve_mask_alpha(0, MaskAlphaMode::Solid(200)), 0);
-            assert_eq!(resolve_mask_alpha(1, MaskAlphaMode::Solid(200)), 200);
-            assert_eq!(resolve_mask_alpha(255, MaskAlphaMode::Solid(200)), 200);
+            #[test]
+            fn scale_negative_treated_as_zero() {
+                assert_eq!(resolve_mask_alpha(255, MaskAlphaMode::Scale(-1.0)), 0);
+            }
+
+            #[test]
+            fn solid_returns_alpha_for_nonzero() {
+                assert_eq!(resolve_mask_alpha(0, MaskAlphaMode::Solid(200)), 0);
+                assert_eq!(resolve_mask_alpha(1, MaskAlphaMode::Solid(200)), 200);
+                assert_eq!(resolve_mask_alpha(255, MaskAlphaMode::Solid(200)), 200);
+            }
         }
 
         mod prop {
@@ -270,67 +274,71 @@ mod tests {
     mod create_rgba_layer_from_mask {
         use super::*;
 
-        #[test]
-        fn dimensions_preserved() {
-            let mask = gray_image(8, 6, 128);
-            let result = create_rgba_layer_from_mask(&mask, MaskFill::default());
-            assert_eq!(result.dimensions(), (8, 6));
-        }
+        mod unit {
+            use super::*;
 
-        #[test]
-        fn use_mask_mode_white_fill() {
-            let mask = gray_image(2, 2, 128);
-            let fill = MaskFill::new([255, 255, 255, 255]);
-            let result = create_rgba_layer_from_mask(&mask, fill);
-
-            // All pixels should be white with alpha=128
-            for px in result.pixels() {
-                assert_eq!(px.0, [255, 255, 255, 128]);
+            #[test]
+            fn dimensions_preserved() {
+                let mask = gray_image(8, 6, 128);
+                let result = create_rgba_layer_from_mask(&mask, MaskFill::default());
+                assert_eq!(result.dimensions(), (8, 6));
             }
-        }
 
-        #[test]
-        fn use_mask_mode_colored_fill() {
-            let mask = gray_image(2, 2, 255);
-            let fill = MaskFill::new([255, 0, 0, 255]); // Red, fully opaque
-            let result = create_rgba_layer_from_mask(&mask, fill);
+            #[test]
+            fn use_mask_mode_white_fill() {
+                let mask = gray_image(2, 2, 128);
+                let fill = MaskFill::new([255, 255, 255, 255]);
+                let result = create_rgba_layer_from_mask(&mask, fill);
 
-            for px in result.pixels() {
-                assert_eq!(px.0, [255, 0, 0, 255]);
+                // All pixels should be white with alpha=128
+                for px in result.pixels() {
+                    assert_eq!(px.0, [255, 255, 255, 128]);
+                }
             }
-        }
 
-        #[test]
-        fn base_alpha_multiplied() {
-            let mask = gray_image(2, 2, 255); // mask_alpha=255
-            let fill = MaskFill::new([255, 255, 255, 128]); // base_alpha=128
-            let result = create_rgba_layer_from_mask(&mask, fill);
+            #[test]
+            fn use_mask_mode_colored_fill() {
+                let mask = gray_image(2, 2, 255);
+                let fill = MaskFill::new([255, 0, 0, 255]); // Red, fully opaque
+                let result = create_rgba_layer_from_mask(&mask, fill);
 
-            for px in result.pixels() {
-                assert_eq!(px.0[3], 128); // (255*128)/255 = 128
+                for px in result.pixels() {
+                    assert_eq!(px.0, [255, 0, 0, 255]);
+                }
             }
-        }
 
-        #[test]
-        fn solid_mode() {
-            let mask = gray_image(2, 2, 50); // non-zero mask
-            let fill = MaskFill::new([0, 255, 0, 255]) // base_alpha=255
-                .with_alpha_mode(MaskAlphaMode::Solid(200)); // solid_alpha=200
-            let result = create_rgba_layer_from_mask(&mask, fill);
+            #[test]
+            fn base_alpha_multiplied() {
+                let mask = gray_image(2, 2, 255); // mask_alpha=255
+                let fill = MaskFill::new([255, 255, 255, 128]); // base_alpha=128
+                let result = create_rgba_layer_from_mask(&mask, fill);
 
-            for px in result.pixels() {
-                assert_eq!(px.0, [0, 255, 0, 200]); // (200*255)/255 = 200
+                for px in result.pixels() {
+                    assert_eq!(px.0[3], 128); // (255*128)/255 = 128
+                }
             }
-        }
 
-        #[test]
-        fn zero_mask_produces_transparent() {
-            let mask = gray_image(2, 2, 0);
-            let fill = MaskFill::new([255, 0, 0, 255]);
-            let result = create_rgba_layer_from_mask(&mask, fill);
+            #[test]
+            fn solid_mode() {
+                let mask = gray_image(2, 2, 50); // non-zero mask
+                let fill = MaskFill::new([0, 255, 0, 255]) // base_alpha=255
+                    .with_alpha_mode(MaskAlphaMode::Solid(200)); // solid_alpha=200
+                let result = create_rgba_layer_from_mask(&mask, fill);
 
-            for px in result.pixels() {
-                assert_eq!(px.0[3], 0);
+                for px in result.pixels() {
+                    assert_eq!(px.0, [0, 255, 0, 200]); // (200*255)/255 = 200
+                }
+            }
+
+            #[test]
+            fn zero_mask_produces_transparent() {
+                let mask = gray_image(2, 2, 0);
+                let fill = MaskFill::new([255, 0, 0, 255]);
+                let result = create_rgba_layer_from_mask(&mask, fill);
+
+                for px in result.pixels() {
+                    assert_eq!(px.0[3], 0);
+                }
             }
         }
 
@@ -389,53 +397,57 @@ mod tests {
     mod alpha_composite {
         use super::*;
 
-        #[test]
-        fn opaque_top_replaces_bottom() {
-            let bottom = rgba_image(2, 2, [255, 0, 0, 255]); // Red, opaque
-            let top = rgba_image(2, 2, [0, 255, 0, 255]); // Green, opaque
-            let result = alpha_composite(&bottom, &top);
+        mod unit {
+            use super::*;
 
-            for px in result.pixels() {
-                assert_eq!(px.0, [0, 255, 0, 255]);
+            #[test]
+            fn opaque_top_replaces_bottom() {
+                let bottom = rgba_image(2, 2, [255, 0, 0, 255]); // Red, opaque
+                let top = rgba_image(2, 2, [0, 255, 0, 255]); // Green, opaque
+                let result = alpha_composite(&bottom, &top);
+
+                for px in result.pixels() {
+                    assert_eq!(px.0, [0, 255, 0, 255]);
+                }
             }
-        }
 
-        #[test]
-        fn transparent_top_shows_bottom() {
-            let bottom = rgba_image(2, 2, [255, 0, 0, 255]); // Red, opaque
-            let top = rgba_image(2, 2, [0, 255, 0, 0]); // Green, transparent
-            let result = alpha_composite(&bottom, &top);
+            #[test]
+            fn transparent_top_shows_bottom() {
+                let bottom = rgba_image(2, 2, [255, 0, 0, 255]); // Red, opaque
+                let top = rgba_image(2, 2, [0, 255, 0, 0]); // Green, transparent
+                let result = alpha_composite(&bottom, &top);
 
-            for px in result.pixels() {
-                assert_eq!(px.0, [255, 0, 0, 255]);
+                for px in result.pixels() {
+                    assert_eq!(px.0, [255, 0, 0, 255]);
+                }
             }
-        }
 
-        #[test]
-        fn half_transparent_blends() {
-            let bottom = rgba_image(2, 2, [0, 0, 0, 255]); // Black, opaque
-            let top = rgba_image(2, 2, [255, 255, 255, 128]); // White, ~50% alpha
-            let result = alpha_composite(&bottom, &top);
+            #[test]
+            fn half_transparent_blends() {
+                let bottom = rgba_image(2, 2, [0, 0, 0, 255]); // Black, opaque
+                let top = rgba_image(2, 2, [255, 255, 255, 128]); // White, ~50% alpha
+                let result = alpha_composite(&bottom, &top);
 
-            // Expected: blended gray, fully opaque
-            // out_a = 0.502 + 1.0 * (1 - 0.502) = 1.0
-            // fg_weight = 0.502, bg_weight = 0.498
-            // color = 255 * 0.502 + 0 * 0.498 = 128
-            for px in result.pixels() {
-                assert_eq!(px.0[3], 255); // Fully opaque result
-                // Color should be around 128 (gray)
-                assert!((px.0[0] as i32 - 128).abs() <= 2);
+                // Expected: blended gray, fully opaque
+                // out_a = 0.502 + 1.0 * (1 - 0.502) = 1.0
+                // fg_weight = 0.502, bg_weight = 0.498
+                // color = 255 * 0.502 + 0 * 0.498 = 128
+                for px in result.pixels() {
+                    assert_eq!(px.0[3], 255); // Fully opaque result
+                    // Color should be around 128 (gray)
+                    assert!((px.0[0] as i32 - 128).abs() <= 2);
+                }
             }
-        }
 
-        #[test]
-        fn both_transparent_stays_transparent() {
-            let bottom = rgba_image(2, 2, [255, 0, 0, 0]);
-            let top = rgba_image(2, 2, [0, 255, 0, 0]);
-            let result = alpha_composite(&bottom, &top);
+            #[test]
+            fn both_transparent_stays_transparent() {
+                let bottom = rgba_image(2, 2, [255, 0, 0, 0]);
+                let top = rgba_image(2, 2, [0, 255, 0, 0]);
+                let result = alpha_composite(&bottom, &top);
 
-            for px in result.pixels() {
-                assert_eq!(px.0[3], 0);
+                for px in result.pixels() {
+                    assert_eq!(px.0[3], 0);
+                }
             }
         }
 
@@ -514,61 +526,71 @@ mod tests {
     mod mask_fill {
         use super::*;
 
-        #[test]
-        fn default_is_white_opaque() {
-            let fill = MaskFill::default();
-            assert_eq!(fill.color, [255, 255, 255, 255]);
-            assert!(matches!(fill.alpha_mode, MaskAlphaMode::UseMask));
-        }
+        mod unit {
+            use super::*;
 
-        #[test]
-        fn with_alpha_mode_builder() {
-            let fill =
-                MaskFill::new([128, 128, 128, 255]).with_alpha_mode(MaskAlphaMode::Scale(0.5));
-            assert_eq!(fill.color, [128, 128, 128, 255]);
-            assert!(matches!(fill.alpha_mode, MaskAlphaMode::Scale(s) if (s - 0.5).abs() < 0.001));
-        }
+            #[test]
+            fn default_is_white_opaque() {
+                let fill = MaskFill::default();
+                assert_eq!(fill.color, [255, 255, 255, 255]);
+                assert!(matches!(fill.alpha_mode, MaskAlphaMode::UseMask));
+            }
 
-        #[test]
-        fn scale_then_base_alpha_combined() {
-            let mask = gray_image(1, 1, 128); // mask=128
-            let fill = MaskFill::new([255, 255, 255, 128]) // base_alpha=128
-                .with_alpha_mode(MaskAlphaMode::Scale(0.5)); // scale=0.5, scaled=64
-            let result = create_rgba_layer_from_mask(&mask, fill);
+            #[test]
+            fn with_alpha_mode_builder() {
+                let fill =
+                    MaskFill::new([128, 128, 128, 255]).with_alpha_mode(MaskAlphaMode::Scale(0.5));
+                assert_eq!(fill.color, [128, 128, 128, 255]);
+                assert!(
+                    matches!(fill.alpha_mode, MaskAlphaMode::Scale(s) if (s - 0.5).abs() < 0.001)
+                );
+            }
 
-            let px = result.get_pixel(0, 0);
-            assert_eq!(px.0[3], 32); // (64 * 128) / 255 = 32
+            #[test]
+            fn scale_then_base_alpha_combined() {
+                let mask = gray_image(1, 1, 128); // mask=128
+                let fill = MaskFill::new([255, 255, 255, 128]) // base_alpha=128
+                    .with_alpha_mode(MaskAlphaMode::Scale(0.5)); // scale=0.5, scaled=64
+                let result = create_rgba_layer_from_mask(&mask, fill);
+
+                let px = result.get_pixel(0, 0);
+                assert_eq!(px.0[3], 32); // (64 * 128) / 255 = 32
+            }
         }
     }
 
     mod overlay_image_on_mask {
         use super::*;
 
-        #[test]
-        fn dimension_mismatch_returns_error() {
-            let layer_mask = gray_image(2, 2, 255);
-            let overlay = rgba_image(3, 3, [255, 0, 0, 255]); // Different size
+        mod unit {
+            use super::*;
 
-            let err =
-                overlay_image_on_mask(&layer_mask, MaskFill::default(), &overlay).unwrap_err();
+            #[test]
+            fn dimension_mismatch_returns_error() {
+                let layer_mask = gray_image(2, 2, 255);
+                let overlay = rgba_image(3, 3, [255, 0, 0, 255]); // Different size
 
-            match err {
-                OutlineError::AlphaMismatch { expected, found } => {
-                    assert_eq!(expected, (3, 3)); // overlay's dimensions
-                    assert_eq!(found, (2, 2)); // mask's dimensions
+                let err =
+                    overlay_image_on_mask(&layer_mask, MaskFill::default(), &overlay).unwrap_err();
+
+                match err {
+                    OutlineError::AlphaMismatch { expected, found } => {
+                        assert_eq!(expected, (3, 3)); // overlay's dimensions
+                        assert_eq!(found, (2, 2)); // mask's dimensions
+                    }
+                    other => panic!("unexpected error: {other:?}"),
                 }
-                other => panic!("unexpected error: {other:?}"),
             }
-        }
 
-        #[test]
-        fn matching_dimensions_succeeds() {
-            let layer_mask = gray_image(2, 2, 128);
-            let overlay = rgba_image(2, 2, [255, 0, 0, 128]);
+            #[test]
+            fn matching_dimensions_succeeds() {
+                let layer_mask = gray_image(2, 2, 128);
+                let overlay = rgba_image(2, 2, [255, 0, 0, 128]);
 
-            let result = overlay_image_on_mask(&layer_mask, MaskFill::default(), &overlay);
-            assert!(result.is_ok());
-            assert_eq!(result.unwrap().dimensions(), (2, 2));
+                let result = overlay_image_on_mask(&layer_mask, MaskFill::default(), &overlay);
+                assert!(result.is_ok());
+                assert_eq!(result.unwrap().dimensions(), (2, 2));
+            }
         }
     }
 }
