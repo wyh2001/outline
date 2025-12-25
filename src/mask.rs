@@ -313,6 +313,47 @@ mod tests {
             assert_eq!(result.get_pixel(0, 0).0[0], 0); // 254 <= 255
             assert_eq!(result.get_pixel(1, 0).0[0], 0); // 255 <= 255
         }
+
+        mod prop {
+            use super::*;
+            use proptest::prelude::*;
+
+            proptest! {
+                /// threshold_mask: output is always binary (0 or 255)
+                #[test]
+                fn output_is_binary(
+                    w in 1u32..20,
+                    h in 1u32..20,
+                    fill_value in proptest::num::u8::ANY,
+                    threshold in proptest::num::u8::ANY
+                ) {
+                    let input = GrayImage::from_pixel(w, h, Luma([fill_value]));
+                    let result = threshold_mask(&input, threshold);
+
+                    prop_assert_eq!(result.dimensions(), (w, h));
+                    for px in result.pixels() {
+                        prop_assert!(px.0[0] == 0 || px.0[0] == 255);
+                    }
+                }
+
+                /// threshold_mask: values > threshold become 255, values <= threshold become 0
+                #[test]
+                fn respects_threshold(
+                    value in proptest::num::u8::ANY,
+                    threshold in proptest::num::u8::ANY
+                ) {
+                    let input = GrayImage::from_pixel(1, 1, Luma([value]));
+                    let result = threshold_mask(&input, threshold);
+                    let out = result.get_pixel(0, 0).0[0];
+
+                    if value > threshold {
+                        prop_assert_eq!(out, 255);
+                    } else {
+                        prop_assert_eq!(out, 0);
+                    }
+                }
+            }
+        }
     }
 
     mod array_to_gray_image {
@@ -371,6 +412,48 @@ mod tests {
             let arr = arr2(&[[0.4]]);
             let result = array_to_gray_image(&arr);
             assert_eq!(result.get_pixel(0, 0).0[0], 102); // 0.4 * 255 + 0.5 = 102.5, truncated
+        }
+
+        mod prop {
+            use super::*;
+            use proptest::prelude::*;
+
+            proptest! {
+                /// array_to_gray_image: any f32 input clamps to [0, 255] range
+                #[test]
+                fn clamps_out_of_range_values(
+                    values in proptest::collection::vec(-10.0f32..10.0f32, 1..100)
+                ) {
+                    // Create a 1D array that we'll reshape - use length as width, height=1
+                    let len = values.len();
+                    let arr = ndarray::Array2::from_shape_vec((1, len), values.clone()).unwrap();
+                    let result = array_to_gray_image(&arr);
+
+                    // Verify clamping: negative values -> 0, values > 1 -> 255
+                    for (i, px) in result.pixels().enumerate() {
+                        let input = values[i];
+                        if input <= 0.0 {
+                            prop_assert_eq!(px.0[0], 0);
+                        } else if input >= 1.0 {
+                            prop_assert_eq!(px.0[0], 255);
+                        }
+                    }
+                    // Dimensions preserved
+                    prop_assert_eq!(result.dimensions(), (len as u32, 1));
+                }
+
+                /// array_to_gray_image: values in [0, 1] map to proportional bytes
+                #[test]
+                fn valid_range_maps_proportionally(value in 0.0f32..=1.0f32) {
+                    let arr = ndarray::arr2(&[[value]]);
+                    let result = array_to_gray_image(&arr);
+                    let byte = result.get_pixel(0, 0).0[0];
+
+                    // Expected: (value * 255.0 + 0.5) as u8
+                    let expected = (value * 255.0 + 0.5) as u8;
+                    prop_assert_eq!(byte, expected);
+                }
+            }
         }
     }
 
@@ -500,6 +583,30 @@ mod tests {
             let is_binary = result.pixels().all(|p| p.0[0] == 0 || p.0[0] == 255);
             assert!(is_binary);
         }
+
+        mod prop {
+            use super::*;
+            use proptest::prelude::*;
+
+            proptest! {
+                /// fill_mask_holes: output is always binary and dimensions preserved
+                #[test]
+                fn output_is_binary(
+                    w in 1u32..15,
+                    h in 1u32..15,
+                    fill_value in proptest::num::u8::ANY,
+                    threshold in proptest::num::u8::ANY
+                ) {
+                    let input = GrayImage::from_pixel(w, h, Luma([fill_value]));
+                    let result = fill_mask_holes(&input, threshold);
+
+                    prop_assert_eq!(result.dimensions(), (w, h));
+                    for px in result.pixels() {
+                        prop_assert!(px.0[0] == 0 || px.0[0] == 255);
+                    }
+                }
+            }
+        }
     }
 
     mod dilate_euclidean {
@@ -577,6 +684,30 @@ mod tests {
             assert_eq!(result.get_pixel(1, 0).0[0], 0);
             assert_eq!(result.get_pixel(1, 2).0[0], 0);
         }
+
+        mod prop {
+            use super::*;
+            use proptest::prelude::*;
+
+            proptest! {
+                /// dilate_euclidean: output is always binary and dimensions preserved
+                #[test]
+                fn output_is_binary(
+                    w in 1u32..15,
+                    h in 1u32..15,
+                    fill_value in proptest::num::u8::ANY,
+                    radius in 0.0f32..5.0f32
+                ) {
+                    let input = GrayImage::from_pixel(w, h, Luma([fill_value]));
+                    let result = dilate_euclidean(&input, radius);
+
+                    prop_assert_eq!(result.dimensions(), (w, h));
+                    for px in result.pixels() {
+                        prop_assert!(px.0[0] == 0 || px.0[0] == 255);
+                    }
+                }
+            }
+        }
     }
 
     mod apply_operations {
@@ -650,6 +781,40 @@ mod tests {
 
             // fallback: overall results must differ
             assert_ne!(result_blur_first.as_raw(), result_threshold_first.as_raw());
+        }
+
+        mod prop {
+            use super::*;
+            use proptest::prelude::*;
+
+            proptest! {
+                /// apply_operations: dimensions always preserved regardless of operations
+                #[test]
+                fn preserves_dimensions(
+                    w in 1u32..10,
+                    h in 1u32..10,
+                    fill_value in proptest::num::u8::ANY
+                ) {
+                    let input = GrayImage::from_pixel(w, h, Luma([fill_value]));
+
+                    // Test with various operation combinations
+                    let ops_threshold = vec![MaskOperation::Threshold { value: 128 }];
+                    let result = apply_operations(&input, &ops_threshold);
+                    prop_assert_eq!(result.dimensions(), (w, h));
+
+                    let ops_dilate = vec![MaskOperation::Dilate { radius: 1.0 }];
+                    let result = apply_operations(&input, &ops_dilate);
+                    prop_assert_eq!(result.dimensions(), (w, h));
+
+                    let ops_fill = vec![MaskOperation::FillHoles { threshold: 128 }];
+                    let result = apply_operations(&input, &ops_fill);
+                    prop_assert_eq!(result.dimensions(), (w, h));
+
+                    let ops_blur = vec![MaskOperation::Blur { sigma: 1.0 }];
+                    let result = apply_operations(&input, &ops_blur);
+                    prop_assert_eq!(result.dimensions(), (w, h));
+                }
+            }
         }
     }
 
@@ -805,143 +970,6 @@ mod tests {
             assert_eq!(result.width, 7);
             assert_eq!(result.height, 5);
             assert_eq!(result.pixels.len(), 7 * 5 * 4);
-        }
-    }
-
-    mod property_tests {
-        use super::*;
-        use proptest::prelude::*;
-
-        proptest! {
-            /// array_to_gray_image: any f32 input clamps to [0, 255] range
-            #[test]
-            fn array_to_gray_image_clamps_out_of_range_values(
-                values in proptest::collection::vec(-10.0f32..10.0f32, 1..100)
-            ) {
-                // Create a 1D array that we'll reshape - use length as width, height=1
-                let len = values.len();
-                let arr = ndarray::Array2::from_shape_vec((1, len), values.clone()).unwrap();
-                let result = array_to_gray_image(&arr);
-
-                // Verify clamping: negative values -> 0, values > 1 -> 255
-                for (i, px) in result.pixels().enumerate() {
-                    let input = values[i];
-                    if input <= 0.0 {
-                        prop_assert_eq!(px.0[0], 0);
-                    } else if input >= 1.0 {
-                        prop_assert_eq!(px.0[0], 255);
-                    }
-                }
-                // Dimensions preserved
-                prop_assert_eq!(result.dimensions(), (len as u32, 1));
-            }
-
-            /// array_to_gray_image: values in [0, 1] map to proportional bytes
-            #[test]
-            fn array_to_gray_image_valid_range_maps_proportionally(value in 0.0f32..=1.0f32) {
-                let arr = ndarray::arr2(&[[value]]);
-                let result = array_to_gray_image(&arr);
-                let byte = result.get_pixel(0, 0).0[0];
-
-                // Expected: (value * 255.0 + 0.5) as u8
-                let expected = (value * 255.0 + 0.5) as u8;
-                prop_assert_eq!(byte, expected);
-            }
-
-            /// threshold_mask: output is always binary (0 or 255)
-            #[test]
-            fn threshold_mask_output_is_binary(
-                w in 1u32..20,
-                h in 1u32..20,
-                fill_value in proptest::num::u8::ANY,
-                threshold in proptest::num::u8::ANY
-            ) {
-                let input = GrayImage::from_pixel(w, h, Luma([fill_value]));
-                let result = threshold_mask(&input, threshold);
-
-                prop_assert_eq!(result.dimensions(), (w, h));
-                for px in result.pixels() {
-                    prop_assert!(px.0[0] == 0 || px.0[0] == 255);
-                }
-            }
-
-            /// threshold_mask: values > threshold become 255, values <= threshold become 0
-            #[test]
-            fn threshold_mask_respects_threshold(
-                value in proptest::num::u8::ANY,
-                threshold in proptest::num::u8::ANY
-            ) {
-                let input = GrayImage::from_pixel(1, 1, Luma([value]));
-                let result = threshold_mask(&input, threshold);
-                let out = result.get_pixel(0, 0).0[0];
-
-                if value > threshold {
-                    prop_assert_eq!(out, 255);
-                } else {
-                    prop_assert_eq!(out, 0);
-                }
-            }
-
-            /// dilate_euclidean: output is always binary and dimensions preserved
-            #[test]
-            fn dilate_euclidean_output_is_binary(
-                w in 1u32..15,
-                h in 1u32..15,
-                fill_value in proptest::num::u8::ANY,
-                radius in 0.0f32..5.0f32
-            ) {
-                let input = GrayImage::from_pixel(w, h, Luma([fill_value]));
-                let result = dilate_euclidean(&input, radius);
-
-                prop_assert_eq!(result.dimensions(), (w, h));
-                for px in result.pixels() {
-                    prop_assert!(px.0[0] == 0 || px.0[0] == 255);
-                }
-            }
-
-            /// fill_mask_holes: output is always binary and dimensions preserved
-            #[test]
-            fn fill_mask_holes_output_is_binary(
-                w in 1u32..15,
-                h in 1u32..15,
-                fill_value in proptest::num::u8::ANY,
-                threshold in proptest::num::u8::ANY
-            ) {
-                let input = GrayImage::from_pixel(w, h, Luma([fill_value]));
-                let result = fill_mask_holes(&input, threshold);
-
-                prop_assert_eq!(result.dimensions(), (w, h));
-                for px in result.pixels() {
-                    prop_assert!(px.0[0] == 0 || px.0[0] == 255);
-                }
-            }
-
-            /// apply_operations: dimensions always preserved regardless of operations
-            #[test]
-            fn apply_operations_preserves_dimensions(
-                w in 1u32..10,
-                h in 1u32..10,
-                fill_value in proptest::num::u8::ANY
-            ) {
-                let input = GrayImage::from_pixel(w, h, Luma([fill_value]));
-
-                // Test with various operation combinations
-                let ops_threshold = vec![MaskOperation::Threshold { value: 128 }];
-                let result = apply_operations(&input, &ops_threshold);
-                prop_assert_eq!(result.dimensions(), (w, h));
-
-                let ops_dilate = vec![MaskOperation::Dilate { radius: 1.0 }];
-                let result = apply_operations(&input, &ops_dilate);
-                prop_assert_eq!(result.dimensions(), (w, h));
-
-                let ops_fill = vec![MaskOperation::FillHoles { threshold: 128 }];
-                let result = apply_operations(&input, &ops_fill);
-                prop_assert_eq!(result.dimensions(), (w, h));
-
-                let ops_blur = vec![MaskOperation::Blur { sigma: 1.0 }];
-                let result = apply_operations(&input, &ops_blur);
-                prop_assert_eq!(result.dimensions(), (w, h));
-            }
         }
     }
 }

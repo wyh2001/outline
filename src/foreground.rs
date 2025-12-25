@@ -132,96 +132,96 @@ mod tests {
             assert_eq!(result.get_pixel(0, 1).0, [70, 80, 90, 170]);
             assert_eq!(result.get_pixel(1, 1).0, [100, 110, 120, 255]);
         }
-    }
 
-    mod property_tests {
-        use super::*;
-        use proptest::prelude::*;
+        mod prop {
+            use super::*;
+            use proptest::prelude::*;
 
-        proptest! {
-            /// compose_foreground: dimensions preserved when inputs match
-            #[test]
-            fn compose_foreground_dimensions_preserved(
-                w in 1u32..20,
-                h in 1u32..20,
-                rgb_val in proptest::num::u8::ANY,
-                alpha_val in proptest::num::u8::ANY
-            ) {
-                let rgb = RgbImage::from_pixel(w, h, Rgb([rgb_val, rgb_val, rgb_val]));
-                let alpha = GrayImage::from_pixel(w, h, Luma([alpha_val]));
-                let result = compose_foreground(&rgb, &alpha).unwrap();
+            proptest! {
+                /// compose_foreground: dimensions preserved when inputs match
+                #[test]
+                fn dimensions_preserved(
+                    w in 1u32..20,
+                    h in 1u32..20,
+                    rgb_val in proptest::num::u8::ANY,
+                    alpha_val in proptest::num::u8::ANY
+                ) {
+                    let rgb = RgbImage::from_pixel(w, h, Rgb([rgb_val, rgb_val, rgb_val]));
+                    let alpha = GrayImage::from_pixel(w, h, Luma([alpha_val]));
+                    let result = compose_foreground(&rgb, &alpha).unwrap();
 
-                prop_assert_eq!(result.dimensions(), (w, h));
-            }
-
-            /// compose_foreground: RGB channels are always preserved from input
-            #[test]
-            fn compose_foreground_rgb_channels_preserved(
-                r in proptest::num::u8::ANY,
-                g in proptest::num::u8::ANY,
-                b in proptest::num::u8::ANY,
-                alpha_val in proptest::num::u8::ANY
-            ) {
-                let rgb = RgbImage::from_pixel(1, 1, Rgb([r, g, b]));
-                let alpha = GrayImage::from_pixel(1, 1, Luma([alpha_val]));
-                let result = compose_foreground(&rgb, &alpha).unwrap();
-                let px = result.get_pixel(0, 0);
-
-                prop_assert_eq!(px.0[0], r);
-                prop_assert_eq!(px.0[1], g);
-                prop_assert_eq!(px.0[2], b);
-            }
-
-            /// compose_foreground: alpha channel equals the input grayscale value
-            #[test]
-            fn compose_foreground_alpha_from_grayscale(
-                alpha_val in proptest::num::u8::ANY
-            ) {
-                let rgb = RgbImage::from_pixel(1, 1, Rgb([128, 128, 128]));
-                let alpha = GrayImage::from_pixel(1, 1, Luma([alpha_val]));
-                let result = compose_foreground(&rgb, &alpha).unwrap();
-                let px = result.get_pixel(0, 0);
-
-                prop_assert_eq!(px.0[3], alpha_val);
-            }
-
-            /// compose_foreground: dimension mismatch always returns error
-            #[test]
-            fn compose_foreground_dimension_mismatch_errors(
-                rgb_w in 1u32..10,
-                rgb_h in 1u32..10,
-                alpha_w in 1u32..10,
-                alpha_h in 1u32..10
-            ) {
-                // Skip cases where dimensions match
-                prop_assume!(rgb_w != alpha_w || rgb_h != alpha_h);
-
-                let rgb = RgbImage::from_pixel(rgb_w, rgb_h, Rgb([128, 128, 128]));
-                let alpha = GrayImage::from_pixel(alpha_w, alpha_h, Luma([128]));
-                let result = compose_foreground(&rgb, &alpha);
-
-                prop_assert!(result.is_err());
-                if let Err(crate::OutlineError::AlphaMismatch { expected, found }) = result {
-                    prop_assert_eq!(expected, (rgb_w, rgb_h));
-                    prop_assert_eq!(found, (alpha_w, alpha_h));
+                    prop_assert_eq!(result.dimensions(), (w, h));
                 }
-            }
 
-            /// compose_foreground: output RGBA matches input RGB + alpha exactly
-            #[test]
-            fn compose_foreground_output_matches_inputs_exactly(
-                r in proptest::num::u8::ANY,
-                g in proptest::num::u8::ANY,
-                b in proptest::num::u8::ANY,
-                a in proptest::num::u8::ANY
-            ) {
-                let rgb = RgbImage::from_pixel(1, 1, Rgb([r, g, b]));
-                let alpha = GrayImage::from_pixel(1, 1, Luma([a]));
-                let result = compose_foreground(&rgb, &alpha).unwrap();
-                let px = result.get_pixel(0, 0);
+                /// compose_foreground: RGB channels are always preserved from input
+                #[test]
+                fn rgb_channels_preserved(
+                    r in proptest::num::u8::ANY,
+                    g in proptest::num::u8::ANY,
+                    b in proptest::num::u8::ANY,
+                    alpha_val in proptest::num::u8::ANY
+                ) {
+                    let rgb = RgbImage::from_pixel(1, 1, Rgb([r, g, b]));
+                    let alpha = GrayImage::from_pixel(1, 1, Luma([alpha_val]));
+                    let result = compose_foreground(&rgb, &alpha).unwrap();
+                    let px = result.get_pixel(0, 0);
 
-                // Output should be exactly [r, g, b, a]
-                prop_assert_eq!(px.0, [r, g, b, a]);
+                    prop_assert_eq!(px.0[0], r);
+                    prop_assert_eq!(px.0[1], g);
+                    prop_assert_eq!(px.0[2], b);
+                }
+
+                /// compose_foreground: alpha channel equals the input grayscale value
+                #[test]
+                fn alpha_from_grayscale(
+                    alpha_val in proptest::num::u8::ANY
+                ) {
+                    let rgb = RgbImage::from_pixel(1, 1, Rgb([128, 128, 128]));
+                    let alpha = GrayImage::from_pixel(1, 1, Luma([alpha_val]));
+                    let result = compose_foreground(&rgb, &alpha).unwrap();
+                    let px = result.get_pixel(0, 0);
+
+                    prop_assert_eq!(px.0[3], alpha_val);
+                }
+
+                /// compose_foreground: dimension mismatch always returns error
+                #[test]
+                fn dimension_mismatch_errors(
+                    rgb_w in 1u32..10,
+                    rgb_h in 1u32..10,
+                    alpha_w in 1u32..10,
+                    alpha_h in 1u32..10
+                ) {
+                    // Skip cases where dimensions match
+                    prop_assume!(rgb_w != alpha_w || rgb_h != alpha_h);
+
+                    let rgb = RgbImage::from_pixel(rgb_w, rgb_h, Rgb([128, 128, 128]));
+                    let alpha = GrayImage::from_pixel(alpha_w, alpha_h, Luma([128]));
+                    let result = compose_foreground(&rgb, &alpha);
+
+                    prop_assert!(result.is_err());
+                    if let Err(crate::OutlineError::AlphaMismatch { expected, found }) = result {
+                        prop_assert_eq!(expected, (rgb_w, rgb_h));
+                        prop_assert_eq!(found, (alpha_w, alpha_h));
+                    }
+                }
+
+                /// compose_foreground: output RGBA matches input RGB + alpha exactly
+                #[test]
+                fn output_matches_inputs_exactly(
+                    r in proptest::num::u8::ANY,
+                    g in proptest::num::u8::ANY,
+                    b in proptest::num::u8::ANY,
+                    a in proptest::num::u8::ANY
+                ) {
+                    let rgb = RgbImage::from_pixel(1, 1, Rgb([r, g, b]));
+                    let alpha = GrayImage::from_pixel(1, 1, Luma([a]));
+                    let result = compose_foreground(&rgb, &alpha).unwrap();
+                    let px = result.get_pixel(0, 0);
+
+                    // Output should be exactly [r, g, b, a]
+                    prop_assert_eq!(px.0, [r, g, b, a]);
+                }
             }
         }
     }
