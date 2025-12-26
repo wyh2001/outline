@@ -9,7 +9,7 @@ It is written in Rust, powered by ONNX Runtime (ort) and VTracer, and works with
 ## Installation
 
 ```bash
-cargo install outline-core --version 0.1.0-alpha.1
+cargo install outline-core
 ```
 
 ## Usage
