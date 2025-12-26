@@ -1,3 +1,4 @@
+mod compose;
 mod cut;
 mod mask;
 mod trace;
@@ -18,5 +19,6 @@ fn dispatch(global: &GlobalOptions, command: Commands) -> OutlineResult<()> {
         Commands::Mask(cmd) => mask::run(global, cmd),
         Commands::Cut(cmd) => cut::run(global, cmd),
         Commands::Trace(cmd) => trace::run(global, cmd),
+        Commands::Compose(cmd) => compose::run(global, cmd),
     }
 }

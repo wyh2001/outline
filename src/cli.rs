@@ -48,6 +48,8 @@ pub enum Commands {
     Cut(CutCommand),
     /// Trace the subject into an SVG outline
     Trace(TraceCommand),
+    /// Compose foreground over a filled background layer
+    Compose(ComposeCommand),
 }
 
 /// Resampling filters for image resizing.
@@ -124,6 +126,63 @@ pub struct TraceCommand {
 }
 
 #[derive(Args, Debug)]
+pub struct ComposeCommand {
+    /// Input image path
+    pub input: PathBuf,
+
+    /// Output path (defaults to `<name>-composite.png`)
+    #[arg(short, long)]
+    pub output: Option<PathBuf>,
+
+    // Background layer options
+    /// Background fill color (#RGB, #RRGGBB, #RRGGBBAA, r,g,b, or r,g,b,a)
+    #[arg(long = "bg-color", default_value = "#FFFFFFFF", value_parser = parse_rgba_color)]
+    pub bg_color: [u8; 4],
+
+    /// Background layer alpha mode
+    #[arg(long = "bg-alpha-mode", value_enum, default_value_t = BgAlphaModeArg::UseMask)]
+    pub bg_alpha_mode: BgAlphaModeArg,
+
+    /// Scale factor for Scale alpha mode
+    #[arg(long = "bg-alpha-scale", default_value_t = 1.0)]
+    pub bg_alpha_scale: f32,
+
+    /// Fixed alpha for Solid alpha mode (0-255)
+    #[arg(long = "bg-solid-alpha", default_value_t = 255)]
+    pub bg_solid_alpha: u8,
+
+    /// Which mask to use for background layer (default: auto -> processed if processing requested)
+    #[arg(long = "bg-mask-source", value_enum, default_value_t = MaskSourceArg::Auto)]
+    pub bg_mask_source: MaskSourceArg,
+
+    // Foreground options
+    /// Which mask to use for foreground alpha (default: auto -> raw for soft edges)
+    #[arg(long = "fg-mask-source", value_enum, default_value_t = MaskSourceArg::Auto)]
+    pub fg_mask_source: MaskSourceArg,
+
+    // Shared mask processing
+    #[command(flatten)]
+    pub mask_processing: MaskProcessingArgs,
+
+    // Optional exports
+    /// Export foreground PNG
+    #[arg(long = "export-foreground", value_name = "PATH", num_args = 0..=1)]
+    pub export_foreground: Option<Option<PathBuf>>,
+
+    /// Export raw matte PNG
+    #[arg(long = "export-matte", value_name = "PATH", num_args = 0..=1)]
+    pub export_matte: Option<Option<PathBuf>>,
+
+    /// Export processed mask PNG
+    #[arg(long = "export-mask", value_name = "PATH", num_args = 0..=1)]
+    pub export_mask: Option<Option<PathBuf>>,
+
+    /// Export background layer PNG
+    #[arg(long = "export-bg-layer", value_name = "PATH", num_args = 0..=1)]
+    pub export_bg_layer: Option<Option<PathBuf>>,
+}
+
+#[derive(Args, Debug)]
 pub struct MaskProcessingArgs {
     /// Enable gaussian blur before thresholding (optionally override sigma)
     #[arg(long = "blur", value_name = "SIGMA", num_args = 0..=1, default_missing_value = "6.0")]
@@ -194,6 +253,84 @@ fn parse_mask_threshold(value: &str) -> Result<u8, String> {
     ))
 }
 
+/// Parse an RGBA color from string.
+/// Supported formats: #RGB, #RRGGBB, #RRGGBBAA, r,g,b, r,g,b,a
+fn parse_rgba_color(s: &str) -> Result<[u8; 4], String> {
+    let s = s.trim();
+    if let Some(hex) = s.strip_prefix('#') {
+        parse_hex_color(hex)
+    } else {
+        parse_csv_color(s)
+    }
+}
+
+/// Parse a single hex byte from a slice, optionally expanding single chars (e.g., "F" -> "FF").
+fn parse_hex_byte(hex: &str, start: usize, len: usize) -> Result<u8, String> {
+    let slice = &hex[start..start + len];
+    let expanded = if len == 1 {
+        // #RGB format: expand single char to double (e.g., "F" -> "FF")
+        [slice, slice].concat()
+    } else {
+        slice.to_string()
+    };
+    u8::from_str_radix(&expanded, 16).map_err(|_| format!("invalid hex digit in color: {}", slice))
+}
+
+fn parse_hex_color(hex: &str) -> Result<[u8; 4], String> {
+    // Validate ASCII before byte-slicing to avoid panic on multi-byte UTF-8 characters
+    if !hex.is_ascii() {
+        return Err("hex color must contain only ASCII characters".to_string());
+    }
+
+    match hex.len() {
+        3 => Ok([
+            parse_hex_byte(hex, 0, 1)?,
+            parse_hex_byte(hex, 1, 1)?,
+            parse_hex_byte(hex, 2, 1)?,
+            255,
+        ]),
+        6 => Ok([
+            parse_hex_byte(hex, 0, 2)?,
+            parse_hex_byte(hex, 2, 2)?,
+            parse_hex_byte(hex, 4, 2)?,
+            255,
+        ]),
+        8 => Ok([
+            parse_hex_byte(hex, 0, 2)?,
+            parse_hex_byte(hex, 2, 2)?,
+            parse_hex_byte(hex, 4, 2)?,
+            parse_hex_byte(hex, 6, 2)?,
+        ]),
+        _ => Err(format!(
+            "invalid hex color length: expected 3, 6, or 8, got {}",
+            hex.len()
+        )),
+    }
+}
+
+fn parse_csv_color(s: &str) -> Result<[u8; 4], String> {
+    let parts: Vec<&str> = s.split(',').map(|p| p.trim()).collect();
+
+    let parse = |p: &str, name: &str| -> Result<u8, String> {
+        p.parse()
+            .map_err(|_| format!("invalid {} component: {}", name, p))
+    };
+
+    match parts.as_slice() {
+        [r, g, b] => Ok([parse(r, "R")?, parse(g, "G")?, parse(b, "B")?, 255]),
+        [r, g, b, a] => Ok([
+            parse(r, "R")?,
+            parse(g, "G")?,
+            parse(b, "B")?,
+            parse(a, "A")?,
+        ]),
+        _ => Err(format!(
+            "expected 3 or 4 color components (r,g,b or r,g,b,a), got {}",
+            parts.len()
+        )),
+    }
+}
+
 /// The argument to specify if binary mask processing is enabled.
 #[derive(Clone, Copy, Debug, ValueEnum, PartialEq, Eq)]
 pub enum BinaryOption {
@@ -216,6 +353,18 @@ pub enum MaskSourceArg {
     Raw,
     Processed,
     Auto,
+}
+
+/// Alpha mode for background layer fill in compose command.
+#[derive(Clone, Copy, Debug, Default, ValueEnum)]
+pub enum BgAlphaModeArg {
+    /// Use the mask value directly as alpha.
+    #[default]
+    UseMask,
+    /// Scale the mask alpha by a factor.
+    Scale,
+    /// Treat any non-zero mask value as a solid alpha.
+    Solid,
 }
 
 /// Tracing color modes for SVG vectorization.
@@ -342,6 +491,317 @@ impl From<&TraceOptionsArgs> for TraceOptions {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    mod parse_hex_byte {
+        use super::*;
+
+        mod unit {
+            use super::*;
+
+            #[test]
+            fn single_char_expands() {
+                assert_eq!(parse_hex_byte("F", 0, 1).unwrap(), 0xFF);
+                assert_eq!(parse_hex_byte("0", 0, 1).unwrap(), 0x00);
+                assert_eq!(parse_hex_byte("A", 0, 1).unwrap(), 0xAA);
+            }
+
+            #[test]
+            fn double_char_parses() {
+                assert_eq!(parse_hex_byte("FF", 0, 2).unwrap(), 0xFF);
+                assert_eq!(parse_hex_byte("00", 0, 2).unwrap(), 0x00);
+                assert_eq!(parse_hex_byte("7F", 0, 2).unwrap(), 0x7F);
+            }
+
+            #[test]
+            fn case_insensitive() {
+                assert_eq!(parse_hex_byte("ff", 0, 2).unwrap(), 0xFF);
+                assert_eq!(parse_hex_byte("aB", 0, 2).unwrap(), 0xAB);
+            }
+
+            #[test]
+            fn offset_works() {
+                assert_eq!(parse_hex_byte("AABBCC", 2, 2).unwrap(), 0xBB);
+                assert_eq!(parse_hex_byte("AABBCC", 4, 2).unwrap(), 0xCC);
+            }
+
+            #[test]
+            fn invalid_hex_digit() {
+                assert!(parse_hex_byte("GG", 0, 2).is_err());
+                assert!(parse_hex_byte("ZZ", 0, 2).is_err());
+            }
+        }
+    }
+
+    mod parse_hex_color {
+        use super::*;
+
+        mod unit {
+            use super::*;
+
+            #[test]
+            fn short_format_rgb() {
+                assert_eq!(parse_hex_color("F00").unwrap(), [0xFF, 0x00, 0x00, 0xFF]);
+                assert_eq!(parse_hex_color("0F0").unwrap(), [0x00, 0xFF, 0x00, 0xFF]);
+                assert_eq!(parse_hex_color("00F").unwrap(), [0x00, 0x00, 0xFF, 0xFF]);
+                assert_eq!(parse_hex_color("FFF").unwrap(), [0xFF, 0xFF, 0xFF, 0xFF]);
+                assert_eq!(parse_hex_color("000").unwrap(), [0x00, 0x00, 0x00, 0xFF]);
+            }
+
+            #[test]
+            fn standard_format_rrggbb() {
+                assert_eq!(parse_hex_color("FF0000").unwrap(), [0xFF, 0x00, 0x00, 0xFF]);
+                assert_eq!(parse_hex_color("00FF00").unwrap(), [0x00, 0xFF, 0x00, 0xFF]);
+                assert_eq!(parse_hex_color("0000FF").unwrap(), [0x00, 0x00, 0xFF, 0xFF]);
+                assert_eq!(parse_hex_color("7F7F7F").unwrap(), [0x7F, 0x7F, 0x7F, 0xFF]);
+            }
+
+            #[test]
+            fn with_alpha_rrggbbaa() {
+                assert_eq!(
+                    parse_hex_color("FF000080").unwrap(),
+                    [0xFF, 0x00, 0x00, 0x80]
+                );
+                assert_eq!(
+                    parse_hex_color("00FF00FF").unwrap(),
+                    [0x00, 0xFF, 0x00, 0xFF]
+                );
+                assert_eq!(
+                    parse_hex_color("00000000").unwrap(),
+                    [0x00, 0x00, 0x00, 0x00]
+                );
+            }
+
+            #[test]
+            fn case_insensitive() {
+                assert_eq!(parse_hex_color("ff0000").unwrap(), [0xFF, 0x00, 0x00, 0xFF]);
+                assert_eq!(parse_hex_color("aAbBcC").unwrap(), [0xAA, 0xBB, 0xCC, 0xFF]);
+            }
+
+            #[test]
+            fn invalid_length() {
+                assert!(parse_hex_color("F").is_err());
+                assert!(parse_hex_color("FF").is_err());
+                assert!(parse_hex_color("FFFF").is_err());
+                assert!(parse_hex_color("FFFFF").is_err());
+                assert!(parse_hex_color("FFFFFFF").is_err());
+                assert!(parse_hex_color("FFFFFFFFF").is_err());
+            }
+
+            #[test]
+            fn invalid_characters() {
+                assert!(parse_hex_color("GGG").is_err());
+                assert!(parse_hex_color("GGGGGG").is_err());
+                assert!(parse_hex_color("FF00GG").is_err());
+            }
+
+            #[test]
+            fn non_ascii_rejected() {
+                assert!(parse_hex_color("中文").is_err());
+                assert!(parse_hex_color("FF中文").is_err());
+            }
+        }
+
+        mod prop {
+            use super::*;
+            use proptest::prelude::*;
+
+            proptest! {
+                #[test]
+                fn short_hex_expands_to_full_hex(r in 0u8..16, g in 0u8..16, b in 0u8..16) {
+                    let short = format!("{:X}{:X}{:X}", r, g, b);
+                    let full = format!("{:X}{:X}{:X}{:X}{:X}{:X}", r, r, g, g, b, b);
+                    let short_result = parse_hex_color(&short).unwrap();
+                    let full_result = parse_hex_color(&full).unwrap();
+                    prop_assert_eq!(short_result, full_result);
+                }
+            }
+        }
+    }
+
+    mod parse_csv_color {
+        use super::*;
+
+        mod unit {
+            use super::*;
+
+            #[test]
+            fn rgb_format() {
+                assert_eq!(parse_csv_color("255,0,0").unwrap(), [255, 0, 0, 255]);
+                assert_eq!(parse_csv_color("0,255,0").unwrap(), [0, 255, 0, 255]);
+                assert_eq!(parse_csv_color("0,0,255").unwrap(), [0, 0, 255, 255]);
+            }
+
+            #[test]
+            fn rgba_format() {
+                assert_eq!(parse_csv_color("255,0,0,128").unwrap(), [255, 0, 0, 128]);
+                assert_eq!(parse_csv_color("0,0,0,0").unwrap(), [0, 0, 0, 0]);
+            }
+
+            #[test]
+            fn whitespace_trimmed() {
+                assert_eq!(parse_csv_color("255, 0, 0").unwrap(), [255, 0, 0, 255]);
+                assert_eq!(parse_csv_color(" 255 , 0 , 0 ").unwrap(), [255, 0, 0, 255]);
+                assert_eq!(
+                    parse_csv_color("255,  0,  0,  128").unwrap(),
+                    [255, 0, 0, 128]
+                );
+            }
+
+            #[test]
+            fn boundary_values() {
+                assert_eq!(parse_csv_color("0,0,0").unwrap(), [0, 0, 0, 255]);
+                assert_eq!(
+                    parse_csv_color("255,255,255").unwrap(),
+                    [255, 255, 255, 255]
+                );
+                assert_eq!(
+                    parse_csv_color("255,255,255,255").unwrap(),
+                    [255, 255, 255, 255]
+                );
+            }
+
+            #[test]
+            fn invalid_component_count() {
+                assert!(parse_csv_color("255").is_err());
+                assert!(parse_csv_color("255,0").is_err());
+                assert!(parse_csv_color("255,0,0,0,0").is_err());
+            }
+
+            #[test]
+            fn overflow_rejected() {
+                assert!(parse_csv_color("256,0,0").is_err());
+                assert!(parse_csv_color("0,256,0").is_err());
+                assert!(parse_csv_color("0,0,256").is_err());
+                assert!(parse_csv_color("0,0,0,256").is_err());
+            }
+
+            #[test]
+            fn negative_rejected() {
+                assert!(parse_csv_color("-1,0,0").is_err());
+            }
+
+            #[test]
+            fn non_numeric_rejected() {
+                assert!(parse_csv_color("abc,0,0").is_err());
+                assert!(parse_csv_color("255,xyz,0").is_err());
+            }
+
+            #[test]
+            fn trailing_comma_rejected() {
+                assert!(parse_csv_color("255,0,0,").is_err());
+            }
+
+            #[test]
+            fn empty_component_rejected() {
+                assert!(parse_csv_color("255,,0").is_err());
+                assert!(parse_csv_color(",0,0").is_err());
+                assert!(parse_csv_color("0,0,").is_err());
+            }
+
+            #[test]
+            fn only_commas_rejected() {
+                assert!(parse_csv_color(",,,").is_err());
+            }
+        }
+    }
+
+    mod parse_rgba_color {
+        use super::*;
+
+        mod unit {
+            use super::*;
+
+            #[test]
+            fn hex_with_hash() {
+                assert_eq!(
+                    parse_rgba_color("#FF0000").unwrap(),
+                    [0xFF, 0x00, 0x00, 0xFF]
+                );
+                assert_eq!(parse_rgba_color("#F00").unwrap(), [0xFF, 0x00, 0x00, 0xFF]);
+                assert_eq!(
+                    parse_rgba_color("#FF000080").unwrap(),
+                    [0xFF, 0x00, 0x00, 0x80]
+                );
+            }
+
+            #[test]
+            fn csv_without_hash() {
+                assert_eq!(parse_rgba_color("255,0,0").unwrap(), [255, 0, 0, 255]);
+                assert_eq!(parse_rgba_color("255,0,0,128").unwrap(), [255, 0, 0, 128]);
+            }
+
+            #[test]
+            fn distinguishes_formats() {
+                // "FF0000" without # is treated as CSV (and fails)
+                assert!(parse_rgba_color("FF0000").is_err());
+                // "#255,0,0" with # is treated as hex (and fails)
+                assert!(parse_rgba_color("#255,0,0").is_err());
+            }
+
+            #[test]
+            fn trims_whitespace() {
+                assert_eq!(
+                    parse_rgba_color("  #FF0000  ").unwrap(),
+                    [0xFF, 0x00, 0x00, 0xFF]
+                );
+                assert_eq!(parse_rgba_color("  255,0,0  ").unwrap(), [255, 0, 0, 255]);
+            }
+
+            #[test]
+            fn empty_and_edge_inputs() {
+                assert!(parse_rgba_color("").is_err());
+                assert!(parse_rgba_color("#").is_err());
+                assert!(parse_rgba_color("   ").is_err());
+            }
+        }
+
+        mod prop {
+            use super::*;
+            use proptest::prelude::*;
+
+            proptest! {
+                #[test]
+                fn trim_idempotent_for_hex_color(
+                    r in any::<u8>(),
+                    g in any::<u8>(),
+                    b in any::<u8>(),
+                    leading in 0usize..5,
+                    trailing in 0usize..5
+                ) {
+                    let hex = format!("{:02X}{:02X}{:02X}", r, g, b);
+                    let padded = format!(
+                        "{}#{}{}",
+                        " ".repeat(leading),
+                        hex,
+                        " ".repeat(trailing)
+                    );
+                    let clean_result = parse_rgba_color(&format!("#{}", hex)).unwrap();
+                    let padded_result = parse_rgba_color(&padded).unwrap();
+                    prop_assert_eq!(clean_result, padded_result);
+                }
+
+                #[test]
+                fn trim_idempotent_for_csv_color(
+                    r in any::<u8>(),
+                    g in any::<u8>(),
+                    b in any::<u8>(),
+                    leading in 0usize..5,
+                    trailing in 0usize..5
+                ) {
+                    let csv = format!("{},{},{}", r, g, b);
+                    let padded = format!(
+                        "{}{}{}",
+                        " ".repeat(leading),
+                        csv,
+                        " ".repeat(trailing)
+                    );
+                    let clean_result = parse_rgba_color(&csv).unwrap();
+                    let padded_result = parse_rgba_color(&padded).unwrap();
+                    prop_assert_eq!(clean_result, padded_result);
+                }
+            }
+        }
+    }
 
     mod parse_mask_threshold {
         use super::*;
@@ -899,6 +1359,45 @@ mod tests {
             }
         }
 
+        // Color value_parser
+        mod color_parsing {
+            use super::*;
+
+            mod unit {
+                use super::*;
+
+                #[test]
+                fn hex_color_parsed() {
+                    let cmd = parse_cmd!(
+                        ["outline", "compose", "in.png", "--bg-color", "#FF0000"],
+                        Compose
+                    );
+                    assert_eq!(cmd.bg_color, [0xFF, 0x00, 0x00, 0xFF]);
+                }
+
+                #[test]
+                fn csv_color_parsed() {
+                    let cmd = parse_cmd!(
+                        ["outline", "compose", "in.png", "--bg-color", "255,0,0"],
+                        Compose
+                    );
+                    assert_eq!(cmd.bg_color, [255, 0, 0, 255]);
+                }
+
+                #[test]
+                fn invalid_color_rejected() {
+                    let result = Cli::try_parse_from([
+                        "outline",
+                        "compose",
+                        "in.png",
+                        "--bg-color",
+                        "invalid",
+                    ]);
+                    assert!(result.is_err());
+                }
+            }
+        }
+
         // ValueEnum parsing for global options and compose command
         mod value_enum_parsing {
             use super::*;
@@ -960,6 +1459,30 @@ mod tests {
                             "failed for {name}"
                         );
                     }
+                }
+
+                #[test]
+                fn bg_alpha_mode_scale() {
+                    let cmd = parse_cmd!(
+                        ["outline", "compose", "in.png", "--bg-alpha-mode", "scale"],
+                        Compose
+                    );
+                    assert!(matches!(cmd.bg_alpha_mode, BgAlphaModeArg::Scale));
+                }
+
+                #[test]
+                fn bg_alpha_mode_solid() {
+                    let cmd = parse_cmd!(
+                        ["outline", "compose", "in.png", "--bg-alpha-mode", "solid"],
+                        Compose
+                    );
+                    assert!(matches!(cmd.bg_alpha_mode, BgAlphaModeArg::Solid));
+                }
+
+                #[test]
+                fn bg_alpha_mode_use_mask_default() {
+                    let cmd = parse_cmd!(["outline", "compose", "in.png"], Compose);
+                    assert!(matches!(cmd.bg_alpha_mode, BgAlphaModeArg::UseMask));
                 }
 
                 #[test]
