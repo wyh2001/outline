@@ -4,7 +4,7 @@
 
 use std::fs::{self, File};
 use std::io::{Read, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use indicatif::{ProgressBar, ProgressStyle};
 use sha2::{Digest, Sha256};
@@ -65,15 +65,19 @@ impl FetchOptions {
 /// Returns `~/.cache/outline-core/` on Linux, `~/Library/Caches/outline-core/` on macOS,
 /// or falls back to current directory if home cannot be determined.
 pub fn default_model_cache_dir() -> PathBuf {
-    if let Some(from_env) = std::env::var_os("OUTLINE_MODEL_CACHE_DIR") {
-        let path = PathBuf::from(from_env);
-        if !path.as_os_str().is_empty() {
-            return path;
-        }
+    let env_override = std::env::var_os("OUTLINE_MODEL_CACHE_DIR").map(PathBuf::from);
+    resolve_cache_dir(env_override, dirs::cache_dir())
+}
+
+fn resolve_cache_dir(env_override: Option<PathBuf>, system_cache_dir: Option<PathBuf>) -> PathBuf {
+    if let Some(path) = env_override
+        && !path.as_os_str().is_empty()
+    {
+        return path;
     }
 
-    dirs::cache_dir()
-        .map(|p| p.join(APP_DIR_NAME))
+    system_cache_dir
+        .map(|path| path.join(APP_DIR_NAME))
         .unwrap_or_else(|| PathBuf::from("."))
 }
 
@@ -82,6 +86,51 @@ pub fn default_model_cache_dir() -> PathBuf {
 /// Returns `~/.cache/outline-core/model.onnx` on Linux, etc.
 pub fn default_model_cache_path() -> PathBuf {
     default_model_cache_dir().join(MODEL_FILENAME)
+}
+
+fn download_and_verify<R: Read>(
+    reader: &mut R,
+    temp_path: &Path,
+    expected_sha256: &str,
+    pb: &ProgressBar,
+) -> OutlineResult<()> {
+    let mut file = File::create(temp_path)?;
+    let mut hasher = Sha256::new();
+    let mut downloaded: u64 = 0;
+    let mut buffer = [0u8; 8192];
+
+    loop {
+        let bytes_read = reader
+            .read(&mut buffer)
+            .map_err(|e| download_error(format!("Model download failed: {e}")))?;
+
+        if bytes_read == 0 {
+            break;
+        }
+
+        file.write_all(&buffer[..bytes_read])?;
+        hasher.update(&buffer[..bytes_read]);
+
+        downloaded += bytes_read as u64;
+        pb.set_position(downloaded);
+    }
+
+    pb.finish_with_message("Download complete");
+    file.flush()?;
+    drop(file);
+
+    let actual_hash = format!("{:x}", hasher.finalize());
+    if actual_hash != expected_sha256 {
+        let _ = fs::remove_file(temp_path);
+        return Err(download_error(format!(
+            "Checksum verification failed: expected {}, got {}",
+            expected_sha256, actual_hash
+        ))
+        .into());
+    }
+    eprintln!("Checksum verified.");
+
+    Ok(())
 }
 
 /// Fetch the model from the configured URL.
@@ -128,45 +177,8 @@ pub fn fetch_model(options: &FetchOptions) -> OutlineResult<PathBuf> {
 
     // Download to a temporary file first
     let temp_path = options.output.with_extension("onnx.tmp");
-    let mut file = File::create(&temp_path)?;
-    let mut hasher = Sha256::new();
-
-    let mut downloaded: u64 = 0;
-    let mut buffer = [0u8; 8192];
     let mut reader = response.into_body().into_reader();
-
-    loop {
-        let bytes_read = reader
-            .read(&mut buffer)
-            .map_err(|e| download_error(format!("Model download failed: {e}")))?;
-
-        if bytes_read == 0 {
-            break;
-        }
-
-        file.write_all(&buffer[..bytes_read])?;
-        hasher.update(&buffer[..bytes_read]);
-
-        downloaded += bytes_read as u64;
-        pb.set_position(downloaded);
-    }
-
-    pb.finish_with_message("Download complete");
-    file.flush()?;
-    drop(file);
-
-    // Verify checksum
-    let actual_hash = format!("{:x}", hasher.finalize());
-    if actual_hash != options.expected_sha256 {
-        // Clean up the temporary file
-        let _ = fs::remove_file(&temp_path);
-        return Err(download_error(format!(
-            "Checksum verification failed: expected {}, got {}",
-            options.expected_sha256, actual_hash
-        ))
-        .into());
-    }
-    eprintln!("Checksum verified.");
+    download_and_verify(&mut reader, &temp_path, &options.expected_sha256, &pb)?;
 
     // Move temp file to final location
     if options.force && options.output.exists() {
@@ -197,4 +209,113 @@ pub fn fetch_model(options: &FetchOptions) -> OutlineResult<PathBuf> {
     }
 
     Ok(options.output.clone())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Cursor;
+
+    #[test]
+    fn resolve_cache_dir_uses_env_override() {
+        let custom_dir = tempfile::tempdir().expect("failed to create temp dir");
+
+        let resolved = resolve_cache_dir(Some(custom_dir.path().to_path_buf()), None);
+        assert_eq!(resolved, custom_dir.path().to_path_buf());
+    }
+
+    #[test]
+    fn resolve_cache_dir_empty_override_falls_back_to_system_cache() {
+        let system_cache = tempfile::tempdir().expect("failed to create temp dir");
+        let expected = system_cache.path().join(APP_DIR_NAME);
+
+        let resolved = resolve_cache_dir(Some(PathBuf::from("")), Some(system_cache.path().into()));
+        assert_eq!(resolved, expected);
+    }
+
+    #[test]
+    fn resolve_cache_dir_without_any_source_falls_back_to_current_dir() {
+        let resolved = resolve_cache_dir(None, None);
+        assert_eq!(resolved, PathBuf::from("."));
+    }
+
+    #[test]
+    fn default_model_cache_path_uses_model_filename() {
+        assert_eq!(
+            default_model_cache_path()
+                .file_name()
+                .and_then(|name| name.to_str()),
+            Some(MODEL_FILENAME)
+        );
+    }
+
+    #[test]
+    fn fetch_options_default_has_expected_values() {
+        let options = FetchOptions::default();
+
+        assert_eq!(options.url, DEFAULT_MODEL_URL);
+        assert_eq!(options.expected_sha256, DEFAULT_MODEL_SHA256);
+        assert_eq!(options.output, default_model_cache_path());
+        assert!(!options.force);
+    }
+
+    #[test]
+    fn fetch_options_builders_override_fields() {
+        let output = PathBuf::from("custom/model.onnx");
+        let options = FetchOptions::default()
+            .with_output(output.clone())
+            .with_force(true);
+
+        assert_eq!(options.output, output);
+        assert!(options.force);
+    }
+
+    #[test]
+    fn fetch_model_existing_file_without_force_skips_download() {
+        let temp_dir = tempfile::tempdir().expect("failed to create temp dir");
+        let output = temp_dir.path().join("model.onnx");
+        fs::write(&output, b"existing-model").expect("failed to write existing model");
+
+        let options = FetchOptions::default().with_output(output.clone());
+        let result = fetch_model(&options).expect("expected existing-file shortcut");
+
+        assert_eq!(result, output);
+        assert_eq!(
+            fs::read(&output).expect("failed to read existing model"),
+            b"existing-model"
+        );
+        assert!(!output.with_extension("onnx.tmp").exists());
+    }
+
+    #[test]
+    fn download_and_verify_writes_file_when_checksum_matches() {
+        let temp_dir = tempfile::tempdir().expect("failed to create temp dir");
+        let temp_path = temp_dir.path().join("model.onnx.tmp");
+        let bytes = b"outline-model-bytes".to_vec();
+        let expected_sha256 = format!("{:x}", Sha256::digest(&bytes));
+        let mut reader = Cursor::new(bytes.clone());
+        let pb = ProgressBar::hidden();
+
+        download_and_verify(&mut reader, &temp_path, &expected_sha256, &pb)
+            .expect("expected checksum success");
+
+        assert_eq!(
+            fs::read(&temp_path).expect("failed to read temp model"),
+            bytes
+        );
+    }
+
+    #[test]
+    fn download_and_verify_removes_temp_file_when_checksum_fails() {
+        let temp_dir = tempfile::tempdir().expect("failed to create temp dir");
+        let temp_path = temp_dir.path().join("model.onnx.tmp");
+        let mut reader = Cursor::new(b"outline-model-bytes".to_vec());
+        let pb = ProgressBar::hidden();
+
+        let error = download_and_verify(&mut reader, &temp_path, "deadbeef", &pb)
+            .expect_err("expected checksum failure");
+
+        assert!(error.to_string().contains("Checksum verification failed"));
+        assert!(!temp_path.exists());
+    }
 }
