@@ -7,7 +7,6 @@ use std::io::{Read, Write};
 use std::path::PathBuf;
 
 use indicatif::{ProgressBar, ProgressStyle};
-use reqwest::blocking::Client;
 use sha2::{Digest, Sha256};
 
 use outline::OutlineResult;
@@ -109,21 +108,15 @@ pub fn fetch_model(options: &FetchOptions) -> OutlineResult<PathBuf> {
     eprintln!("Saving to: {}", options.output.display());
 
     // Download with progress
-    let client = Client::new();
-    let response = client
-        .get(&options.url)
-        .send()
-        .map_err(|e| download_error(format!("Model download failed: {e}")))?;
-
-    if !response.status().is_success() {
-        return Err(download_error(format!(
-            "Model download failed: HTTP error {}",
-            response.status()
-        ))
-        .into());
-    }
-
-    let total_size = response.content_length().unwrap_or(0);
+    let response = ureq::get(&options.url)
+        .call()
+        .map_err(|error| match error {
+            ureq::Error::StatusCode(status) => {
+                download_error(format!("Model download failed: HTTP error {status}"))
+            }
+            other => download_error(format!("Model download failed: {other}")),
+        })?;
+    let total_size = response.body().content_length().unwrap_or(0);
 
     let pb = ProgressBar::new(total_size);
     pb.set_style(
@@ -140,7 +133,7 @@ pub fn fetch_model(options: &FetchOptions) -> OutlineResult<PathBuf> {
 
     let mut downloaded: u64 = 0;
     let mut buffer = [0u8; 8192];
-    let mut reader = response;
+    let mut reader = response.into_body().into_reader();
 
     loop {
         let bytes_read = reader
