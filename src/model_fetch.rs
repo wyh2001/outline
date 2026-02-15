@@ -11,7 +11,7 @@ use sha2::{Digest, Sha256};
 
 use outline::OutlineResult;
 
-const APP_DIR_NAME: &str = "outline";
+const APP_DIR_NAME: &str = "outline-core";
 const MODEL_FILENAME: &str = "model.onnx";
 const DEFAULT_MODEL_URL: &str =
     "https://github.com/danielgatis/rembg/releases/download/v0.0.0/silueta.onnx";
@@ -62,7 +62,7 @@ impl FetchOptions {
 
 /// Get the default model cache directory path.
 ///
-/// Returns `~/.cache/outline/` on Linux, `~/Library/Caches/outline/` on macOS,
+/// Returns `~/.cache/outline-core/` on Linux, `~/Library/Caches/outline-core/` on macOS,
 /// or falls back to current directory if home cannot be determined.
 pub fn default_model_cache_dir() -> PathBuf {
     if let Some(from_env) = std::env::var_os("OUTLINE_MODEL_CACHE_DIR") {
@@ -79,7 +79,7 @@ pub fn default_model_cache_dir() -> PathBuf {
 
 /// Get the default model cache path.
 ///
-/// Returns `~/.cache/outline/model.onnx` on Linux, etc.
+/// Returns `~/.cache/outline-core/model.onnx` on Linux, etc.
 pub fn default_model_cache_path() -> PathBuf {
     default_model_cache_dir().join(MODEL_FILENAME)
 }
