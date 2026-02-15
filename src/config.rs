@@ -6,6 +6,9 @@ use image::imageops::FilterType;
 pub const ENV_MODEL_PATH: &str = "OUTLINE_MODEL_PATH";
 
 /// Default model path used when no explicit path is provided.
+///
+/// This is the fallback when neither `--model` nor `OUTLINE_MODEL_PATH` is set.
+/// By default it points to `model.onnx` in the current working directory.
 pub const DEFAULT_MODEL_PATH: &str = "model.onnx";
 
 /// Configuration for ONNX model inference and image preprocessing.

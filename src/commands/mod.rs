@@ -1,4 +1,6 @@
 mod cut;
+#[cfg(feature = "model-fetch")]
+mod fetch_model;
 mod mask;
 mod trace;
 mod utils;
@@ -18,5 +20,7 @@ fn dispatch(global: &GlobalOptions, command: Commands) -> OutlineResult<()> {
         Commands::Mask(cmd) => mask::run(global, cmd),
         Commands::Cut(cmd) => cut::run(global, cmd),
         Commands::Trace(cmd) => trace::run(global, cmd),
+        #[cfg(feature = "model-fetch")]
+        Commands::FetchModel(cmd) => fetch_model::run(cmd),
     }
 }

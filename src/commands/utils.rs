@@ -6,10 +6,46 @@ use crate::cli::{
     AlphaFromArg, BinaryOption, GlobalOptions, MaskExportSource, MaskProcessingArgs, MaskSourceArg,
 };
 
+fn resolve_model_path(global: &GlobalOptions) -> PathBuf {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let cached: Option<PathBuf> = {
+        #[cfg(feature = "model-fetch")]
+        {
+            Some(crate::model_fetch::default_model_cache_path())
+        }
+
+        #[cfg(not(feature = "model-fetch"))]
+        {
+            None
+        }
+    };
+    resolve_model_path_impl(global, &cwd, cached.as_deref())
+}
+
+fn resolve_model_path_impl(global: &GlobalOptions, cwd: &Path, cached: Option<&Path>) -> PathBuf {
+    if let Some(model) = global.model.clone() {
+        return model;
+    }
+
+    let local_default = PathBuf::from(outline::DEFAULT_MODEL_PATH);
+    if cwd.join(outline::DEFAULT_MODEL_PATH).is_file() {
+        return local_default;
+    }
+
+    if let Some(cached) = cached
+        && cached.is_file()
+    {
+        eprintln!("Using cached model at {}", cached.display());
+        return cached.to_path_buf();
+    }
+
+    local_default
+}
+
 /// The convenience function to build an Outline instance with the input global and mask processing options.
 pub fn build_outline(global: &GlobalOptions, mask_args: &MaskProcessingArgs) -> Outline {
     let mask_processing = mask_args.into();
-    Outline::new(global.model.clone())
+    Outline::new(resolve_model_path(global))
         .with_input_resize_filter(global.input_resample_filter.into())
         .with_output_resize_filter(global.output_resample_filter.into())
         .with_intra_threads(global.intra_threads)
@@ -122,6 +158,109 @@ pub fn resolve_mask_export_source(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    mod resolve_model_path {
+        use super::*;
+        use crate::cli::ResampleFilter;
+        use std::fs;
+        use tempfile::TempDir;
+
+        fn temp_dir(prefix: &str) -> TempDir {
+            tempfile::Builder::new()
+                .prefix(prefix)
+                .tempdir()
+                .expect("failed to create temp dir")
+        }
+
+        fn make_global(model: Option<PathBuf>) -> GlobalOptions {
+            GlobalOptions {
+                model,
+                intra_threads: None,
+                input_resample_filter: ResampleFilter::Triangle,
+                output_resample_filter: ResampleFilter::Lanczos3,
+            }
+        }
+
+        #[test]
+        fn explicit_model_is_used_as_is() {
+            let global = make_global(Some(PathBuf::from("explicit.onnx")));
+            assert_eq!(
+                super::resolve_model_path_impl(&global, Path::new("."), None),
+                PathBuf::from("explicit.onnx")
+            );
+        }
+
+        #[test]
+        fn local_default_used_when_present() {
+            let work_dir = temp_dir("outline-model-resolve-local");
+            fs::write(work_dir.path().join("model.onnx"), b"local")
+                .expect("failed to write local model");
+
+            let global = make_global(None);
+            assert_eq!(
+                super::resolve_model_path_impl(&global, work_dir.path(), None),
+                PathBuf::from("model.onnx")
+            );
+        }
+
+        #[cfg(feature = "model-fetch")]
+        #[test]
+        fn cached_model_used_when_local_missing() {
+            let work_dir = temp_dir("outline-model-resolve-work");
+            let cache_dir = temp_dir("outline-model-resolve-cache");
+            let cached = cache_dir.path().join("model.onnx");
+            fs::write(&cached, b"cached").expect("failed to write cached model");
+
+            let global = make_global(None);
+            assert_eq!(
+                super::resolve_model_path_impl(&global, work_dir.path(), Some(&cached)),
+                cached
+            );
+        }
+
+        #[cfg(feature = "model-fetch")]
+        #[test]
+        fn local_default_preferred_over_cache_when_both_exist() {
+            let work_dir = temp_dir("outline-model-resolve-prefer-local");
+            fs::write(work_dir.path().join("model.onnx"), b"local")
+                .expect("failed to write local model");
+
+            let cache_dir = temp_dir("outline-model-resolve-cache");
+            let cached = cache_dir.path().join("model.onnx");
+            fs::write(&cached, b"cached").expect("failed to write cached model");
+
+            let global = make_global(None);
+            assert_eq!(
+                super::resolve_model_path_impl(&global, work_dir.path(), Some(&cached)),
+                PathBuf::from("model.onnx")
+            );
+        }
+
+        #[test]
+        fn local_default_returned_when_no_model_files() {
+            let work_dir = temp_dir("outline-model-resolve-empty");
+
+            let global = make_global(None);
+            assert_eq!(
+                super::resolve_model_path_impl(&global, work_dir.path(), None),
+                PathBuf::from("model.onnx")
+            );
+        }
+
+        #[cfg(feature = "model-fetch")]
+        #[test]
+        fn local_default_returned_when_cached_path_missing() {
+            let work_dir = temp_dir("outline-model-resolve-missing-cache-work");
+            let cache_dir = temp_dir("outline-model-resolve-missing-cache");
+            let missing_cached = cache_dir.path().join("model.onnx");
+
+            let global = make_global(None);
+            assert_eq!(
+                super::resolve_model_path_impl(&global, work_dir.path(), Some(&missing_cached)),
+                PathBuf::from("model.onnx")
+            );
+        }
+    }
 
     mod derive_variant_path {
         use super::*;

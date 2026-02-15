@@ -882,7 +882,6 @@ mod tests {
                     dilate: true,
                     dilation_radius: 5.0,
                     fill_holes: true,
-                    ..Default::default()
                 };
                 let ops = operations_from_options(&opts);
                 assert_eq!(ops.len(), 4);

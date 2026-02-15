@@ -10,6 +10,7 @@ description = "Image background removal with flexible mask processing options"
 default = ["cli"]
 cli = ["clap", "vectorizer-vtracer"]
 vectorizer-vtracer = ["dep:vtracer", "dep:visioncortex"]
+model-fetch = ["dep:reqwest", "dep:indicatif", "dep:sha2", "dep:dirs"]
 
 [lib]
 name = "outline"
@@ -28,6 +29,10 @@ visioncortex = { version = "0.8.9", optional = true }
 imageproc = "0.25.0"
 thiserror = "2"
 clap = { version = "4", features = ["derive", "env"], optional = true }
+reqwest = { version = "0.12", features = ["blocking", "stream"], optional = true }
+indicatif = { version = "0.18", optional = true }
+sha2 = { version = "0.10", optional = true }
+dirs = { version = "6", optional = true }
 
 [[bin]]
 name = "outline"
@@ -36,6 +41,7 @@ required-features = ["cli"]
 
 [dev-dependencies]
 proptest = "1.9.0"
+tempfile = "3"
 
 # The profile that 'dist' will build with
 [profile.dist]

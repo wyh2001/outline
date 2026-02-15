@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use thiserror::Error;
 
 /// Result type alias for operations that may fail with [`OutlineError`].
@@ -30,4 +32,7 @@ pub enum OutlineError {
         expected: (u32, u32),
         found: (u32, u32),
     },
+    /// Model file not found at the specified path.
+    #[error("Model file not found: {}", path.display())]
+    ModelNotFound { path: PathBuf },
 }

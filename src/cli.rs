@@ -25,10 +25,9 @@ pub struct GlobalOptions {
         long,
         global = true,
         env = outline::ENV_MODEL_PATH,
-        value_hint = ValueHint::FilePath,
-        default_value = outline::DEFAULT_MODEL_PATH
+        value_hint = ValueHint::FilePath
     )]
-    pub model: PathBuf,
+    pub model: Option<PathBuf>,
     /// Intra-op thread count for ORT (None to let ORT decide)
     #[arg(long, global = true)]
     pub intra_threads: Option<usize>,
@@ -48,6 +47,9 @@ pub enum Commands {
     Cut(CutCommand),
     /// Trace the subject into an SVG outline
     Trace(TraceCommand),
+    /// Download the default model from the network
+    #[cfg(feature = "model-fetch")]
+    FetchModel(FetchModelCommand),
 }
 
 /// Resampling filters for image resizing.
@@ -121,6 +123,18 @@ pub struct TraceCommand {
     pub mask_processing: MaskProcessingArgs,
     #[command(flatten)]
     pub trace_options: TraceOptionsArgs,
+}
+
+/// Command to download the default model.
+#[cfg(feature = "model-fetch")]
+#[derive(Args, Debug, Clone)]
+pub struct FetchModelCommand {
+    /// Output path for the downloaded model
+    #[arg(short, long, value_hint = ValueHint::FilePath)]
+    pub output: Option<PathBuf>,
+    /// Overwrite existing model file
+    #[arg(long)]
+    pub force: bool,
 }
 
 #[derive(Args, Debug)]
