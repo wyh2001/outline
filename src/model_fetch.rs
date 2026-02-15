@@ -1,6 +1,6 @@
 //! Model download functionality.
 //!
-//! This module is only available when the `model-fetch` feature is enabled.
+//! This module is only available when the `fetch-model` feature is enabled.
 
 use std::fs::{self, File};
 use std::io::{Read, Write};

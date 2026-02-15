@@ -10,7 +10,7 @@ description = "Image background removal with flexible mask processing options"
 default = ["cli"]
 cli = ["clap", "vectorizer-vtracer"]
 vectorizer-vtracer = ["dep:vtracer", "dep:visioncortex"]
-model-fetch = ["dep:ureq", "dep:indicatif", "dep:sha2", "dep:dirs"]
+fetch-model = ["dep:ureq", "dep:indicatif", "dep:sha2", "dep:dirs"]
 
 [lib]
 name = "outline"

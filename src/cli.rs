@@ -48,7 +48,7 @@ pub enum Commands {
     /// Trace the subject into an SVG outline
     Trace(TraceCommand),
     /// Download the default model from the network
-    #[cfg(feature = "model-fetch")]
+    #[cfg(feature = "fetch-model")]
     FetchModel(FetchModelCommand),
 }
 
@@ -126,7 +126,7 @@ pub struct TraceCommand {
 }
 
 /// Command to download the default model.
-#[cfg(feature = "model-fetch")]
+#[cfg(feature = "fetch-model")]
 #[derive(Args, Debug, Clone)]
 pub struct FetchModelCommand {
     /// Output path for the downloaded model

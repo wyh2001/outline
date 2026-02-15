@@ -1,6 +1,6 @@
 mod cli;
 mod commands;
-#[cfg(feature = "model-fetch")]
+#[cfg(feature = "fetch-model")]
 mod model_fetch;
 mod report;
 

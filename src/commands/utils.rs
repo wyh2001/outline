@@ -9,12 +9,12 @@ use crate::cli::{
 fn resolve_model_path(global: &GlobalOptions) -> PathBuf {
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let cached: Option<PathBuf> = {
-        #[cfg(feature = "model-fetch")]
+        #[cfg(feature = "fetch-model")]
         {
             Some(crate::model_fetch::default_model_cache_path())
         }
 
-        #[cfg(not(feature = "model-fetch"))]
+        #[cfg(not(feature = "fetch-model"))]
         {
             None
         }
@@ -203,7 +203,7 @@ mod tests {
             );
         }
 
-        #[cfg(feature = "model-fetch")]
+        #[cfg(feature = "fetch-model")]
         #[test]
         fn cached_model_used_when_local_missing() {
             let work_dir = temp_dir("outline-model-resolve-work");
@@ -218,7 +218,7 @@ mod tests {
             );
         }
 
-        #[cfg(feature = "model-fetch")]
+        #[cfg(feature = "fetch-model")]
         #[test]
         fn local_default_preferred_over_cache_when_both_exist() {
             let work_dir = temp_dir("outline-model-resolve-prefer-local");
@@ -247,7 +247,7 @@ mod tests {
             );
         }
 
-        #[cfg(feature = "model-fetch")]
+        #[cfg(feature = "fetch-model")]
         #[test]
         fn local_default_returned_when_cached_path_missing() {
             let work_dir = temp_dir("outline-model-resolve-missing-cache-work");

@@ -11,7 +11,7 @@ pub fn report_error(err: &OutlineError) {
                 "  - Or set environment variable {} to your model path",
                 outline::ENV_MODEL_PATH
             );
-            #[cfg(feature = "model-fetch")]
+            #[cfg(feature = "fetch-model")]
             {
                 eprintln!();
                 eprintln!("Or run `outline fetch-model` to download automatically.");
