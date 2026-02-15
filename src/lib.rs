@@ -536,3 +536,85 @@ impl ForegroundHandle {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    // Serialize env-var tests so they don't race each other.
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    mod outline_new {
+        use super::*;
+
+        #[test]
+        fn user_value_is_stored_directly() {
+            let outline = Outline::new("/explicit/model.onnx");
+            assert_eq!(
+                outline.settings.model_path,
+                PathBuf::from("/explicit/model.onnx")
+            );
+        }
+
+        #[test]
+        fn user_value_ignores_env_var() {
+            let _lock = ENV_LOCK.lock().unwrap();
+            // SAFETY: serialized by ENV_LOCK; no other thread reads this var concurrently.
+            unsafe { std::env::set_var(ENV_MODEL_PATH, "env.onnx") };
+            let outline = Outline::new("user.onnx");
+            unsafe { std::env::remove_var(ENV_MODEL_PATH) };
+            assert_eq!(outline.settings.model_path, PathBuf::from("user.onnx"));
+        }
+    }
+
+    mod outline_from_env_or_default {
+        use super::*;
+
+        #[test]
+        fn uses_env_var_when_set() {
+            let _lock = ENV_LOCK.lock().unwrap();
+            // SAFETY: serialized by ENV_LOCK; no other thread reads this var concurrently.
+            unsafe { std::env::set_var(ENV_MODEL_PATH, "/from/env.onnx") };
+            let outline = Outline::from_env_or_default();
+            unsafe { std::env::remove_var(ENV_MODEL_PATH) };
+            assert_eq!(outline.settings.model_path, PathBuf::from("/from/env.onnx"));
+        }
+
+        #[test]
+        fn falls_back_to_default_when_env_unset() {
+            let _lock = ENV_LOCK.lock().unwrap();
+            // SAFETY: serialized by ENV_LOCK; no other thread reads this var concurrently.
+            unsafe { std::env::remove_var(ENV_MODEL_PATH) };
+            let outline = Outline::from_env_or_default();
+            assert_eq!(
+                outline.settings.model_path,
+                PathBuf::from(DEFAULT_MODEL_PATH)
+            );
+        }
+    }
+
+    mod outline_try_from_env {
+        use super::*;
+
+        #[test]
+        fn succeeds_when_env_set() {
+            let _lock = ENV_LOCK.lock().unwrap();
+            // SAFETY: serialized by ENV_LOCK; no other thread reads this var concurrently.
+            unsafe { std::env::set_var(ENV_MODEL_PATH, "/from/env.onnx") };
+            let result = Outline::try_from_env();
+            unsafe { std::env::remove_var(ENV_MODEL_PATH) };
+            let outline = result.expect("should succeed when env is set");
+            assert_eq!(outline.settings.model_path, PathBuf::from("/from/env.onnx"));
+        }
+
+        #[test]
+        fn errors_when_env_unset() {
+            let _lock = ENV_LOCK.lock().unwrap();
+            // SAFETY: serialized by ENV_LOCK; no other thread reads this var concurrently.
+            unsafe { std::env::remove_var(ENV_MODEL_PATH) };
+            let result = Outline::try_from_env();
+            assert!(result.is_err());
+        }
+    }
+}
