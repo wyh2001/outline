@@ -1,3 +1,29 @@
+//! # Outline
+//!
+//! Image background removal with flexible mask processing options.
+//!
+//! Powered by ONNX Runtime ([`ort`](https://docs.rs/ort)) and VTracer, and works with U2-Net, BiRefNet,
+//! and other ONNX models with a compatible input/output shape.
+//!
+//! # Quick Start
+//!
+//! ```no_run
+//! use outline::Outline;
+//!
+//! let outline = Outline::new("model.onnx");
+//! let session = outline.for_image("input.png")?;
+//! let matte = session.matte();
+//!
+//! // Compose the foreground directly from the raw matte (soft edges)
+//! let foreground = matte.foreground()?;
+//! foreground.save("foreground.png")?;
+//!
+//! // Process the mask and save it
+//! let mask = matte.blur().threshold().processed()?;
+//! mask.save("mask.png")?;
+//! # Ok::<_, outline::OutlineError>(())
+//! ```
+
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 mod config;
@@ -45,6 +71,7 @@ pub struct Outline {
 }
 
 impl Outline {
+    /// Create a new `Outline` instance with the given model path and default settings.
     pub fn new(model_path: impl Into<PathBuf>) -> Self {
         Self {
             settings: InferenceSettings::new(model_path),
@@ -124,14 +151,16 @@ impl Outline {
 /// use outline::Outline;
 ///
 /// let outline = Outline::new("model.onnx");
-/// let session = outline.for_image("input.jpg")?;
+/// let session = outline.for_image("input.png")?;
+/// let matte = session.matte();
 ///
 /// // Access the original image and raw matte directly
 /// let rgb = session.rgb_image();
 /// let raw_matte = session.raw_matte();
 ///
-/// // Begin building a processing pipeline
-/// let matte = session.matte();
+/// // Compose the foreground from the raw matte
+/// let foreground = matte.foreground()?;
+/// foreground.save("foreground.png")?;
 /// # Ok::<_, outline::OutlineError>(())
 /// ```
 #[derive(Debug, Clone)]
@@ -164,6 +193,7 @@ impl InferencedMatte {
         self.raw_matte.as_ref()
     }
 
+    /// Begin building a mask processing pipeline from the raw matte.
     pub fn matte(&self) -> MatteHandle {
         MatteHandle {
             rgb_image: Arc::clone(&self.rgb_image),

@@ -9,8 +9,7 @@ use super::MaskVectorizer;
 
 /// Configuration for vectorizing masks into SVG paths using VTracer.
 ///
-/// Controls color mode, path simplification, precision, and various tracing parameters.
-/// Used with [`VtracerSvgVectorizer`] to convert grayscale masks into scalable vector graphics.
+/// These options map directly to [`vtracer::Config`].
 #[derive(Debug, Clone)]
 pub struct TraceOptions {
     pub tracer_color_mode: ColorMode,

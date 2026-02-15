@@ -76,12 +76,19 @@ impl InferenceSettings {
 /// maximum control and predictability.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MaskProcessingOptions {
+    /// Whether to apply binary thresholding to the mask.
     pub binary: bool,
+    /// Whether to apply Gaussian blur to the mask.
     pub blur: bool,
+    /// Standard deviation (sigma) for Gaussian blur.
     pub blur_sigma: f32,
+    /// Threshold value (0–255) used for binary conversion and hole-filling.
     pub mask_threshold: u8,
+    /// Whether to dilate the mask using a Euclidean distance transform.
     pub dilate: bool,
+    /// Radius in pixels for the dilation operation.
     pub dilation_radius: f32,
+    /// Whether to fill interior holes in the binary mask.
     pub fill_holes: bool,
 }
 

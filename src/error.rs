@@ -29,10 +29,15 @@ pub enum OutlineError {
     /// Alpha matte dimensions do not match the source image.
     #[error("Alpha matte size {found:?} does not match source image size {expected:?}")]
     AlphaMismatch {
+        /// Expected dimensions (width, height).
         expected: (u32, u32),
+        /// Actual dimensions (width, height).
         found: (u32, u32),
     },
     /// Model file not found at the specified path.
     #[error("Model file not found: {}", path.display())]
-    ModelNotFound { path: PathBuf },
+    ModelNotFound {
+        /// The path that was searched.
+        path: PathBuf,
+    },
 }
