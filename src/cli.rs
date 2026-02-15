@@ -1001,5 +1001,54 @@ mod tests {
                 }
             }
         }
+
+        /// Integration tests for model path resolution priority through clap.
+        ///
+        /// Priority: --model flag > OUTLINE_MODEL_PATH env var > (downstream: cached > default)
+        mod model_path_priority {
+            use super::*;
+            use clap::Parser;
+            use std::sync::Mutex;
+
+            // Serialize env-var tests so they don't race each other.
+            static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+            #[test]
+            fn flag_sets_model() {
+                let cli = Cli::try_parse_from(["outline", "-m", "flag.onnx", "mask", "input.png"])
+                    .unwrap();
+                assert_eq!(cli.global.model, Some(PathBuf::from("flag.onnx")));
+            }
+
+            #[test]
+            fn env_var_sets_model() {
+                let _lock = ENV_LOCK.lock().unwrap();
+                // SAFETY: serialized by ENV_LOCK; no other thread reads this var concurrently.
+                unsafe { std::env::set_var(outline::ENV_MODEL_PATH, "env.onnx") };
+                let cli = Cli::try_parse_from(["outline", "mask", "input.png"]).unwrap();
+                unsafe { std::env::remove_var(outline::ENV_MODEL_PATH) };
+                assert_eq!(cli.global.model, Some(PathBuf::from("env.onnx")));
+            }
+
+            #[test]
+            fn flag_overrides_env_var() {
+                let _lock = ENV_LOCK.lock().unwrap();
+                // SAFETY: serialized by ENV_LOCK; no other thread reads this var concurrently.
+                unsafe { std::env::set_var(outline::ENV_MODEL_PATH, "env.onnx") };
+                let cli = Cli::try_parse_from(["outline", "-m", "flag.onnx", "mask", "input.png"])
+                    .unwrap();
+                unsafe { std::env::remove_var(outline::ENV_MODEL_PATH) };
+                assert_eq!(cli.global.model, Some(PathBuf::from("flag.onnx")));
+            }
+
+            #[test]
+            fn neither_flag_nor_env_gives_none() {
+                let _lock = ENV_LOCK.lock().unwrap();
+                // SAFETY: serialized by ENV_LOCK; no other thread reads this var concurrently.
+                unsafe { std::env::remove_var(outline::ENV_MODEL_PATH) };
+                let cli = Cli::try_parse_from(["outline", "mask", "input.png"]).unwrap();
+                assert_eq!(cli.global.model, None);
+            }
+        }
     }
 }
