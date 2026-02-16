@@ -172,6 +172,10 @@ fn generate_assets() -> outline::OutlineResult<()> {
 - Improve the CLI syntax for better usability and expressiveness
 - Provide a lightweight GUI for easier use.
 
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md) for a list of changes.
+
 ## License
 
-Distributed under the MIT License. See `LICENSE` for details.
+Distributed under the MIT License. See [LICENSE](LICENSE) for details.
