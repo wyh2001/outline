@@ -1,8 +1,8 @@
 # Outline
 
-Outline is a background remover with a flexible mask-processing pipeline and a built-in SVG tracing workflow.
+Outline is an image background removal tool with flexible mask processing options.
 
-It is written in Rust, powered by ONNX Runtime (ort) and VTracer, and works with U2-Net, BiRefNet, and other ONNX models that share a similar input/output shape.
+It is written in Rust, powered by ONNX Runtime (ort) and VTracer, and works with U2-Net, BiRefNet, and other ONNX models with a compatible input/output shape.
 
 > This project is still in early development. Breaking changes may occur in future releases.
 
@@ -12,17 +12,26 @@ It is written in Rust, powered by ONNX Runtime (ort) and VTracer, and works with
 cargo install outline-core
 ```
 
+For the CLI, you can also install with `--features fetch-model` to enable one-command model downloading:
+
+```bash
+cargo install outline-core --features fetch-model
+outline fetch-model
+```
+
 ## Usage
 
-Outline supports being used as a library or via a command-line interface (CLI).
+Outline works as both a library and a CLI.
 
-Before using, specify your ONNX model path:
+Before using Outline, specify your ONNX model path:
 
 - CLI flag: `-m, --model <path>`
 - Library API: `Outline::new(<path>)`
 - Environment variable: set `OUTLINE_MODEL_PATH`
 
-Resolution order: user value > environment variable > default (`model.onnx`).
+If you don't have a model file yet, download one first: [silueta.onnx](https://github.com/danielgatis/rembg/releases/download/v0.0.0/silueta.onnx).
+
+Resolution order: user value > environment variable > cached model (CLI only with `fetch-model` enabled) > default (`model.onnx`).
 
 ### CLI Usage
 
@@ -37,7 +46,7 @@ outline cut input.jpg -o subject.png
 # Export a foreground PNG with feathered edges
 outline cut input.jpg --blur -o subject-soft-alpha.png
 
-# Export the raw matte png
+# Export the raw matte PNG
 outline mask input.jpg -o subject-matte.png
 
 # Export a processed binary mask png
@@ -94,7 +103,7 @@ The raw matte (soft mask) preserves the grayscale alpha predicted by the model. 
 #### `trace` Command
 
 - `-o, --output <path>`: SVG output path (default is the input name with `.svg`).
-- `--mask-source {raw|processed|auto}`: Choose the mask used for tracing. `auto` (default) exports the raw matte unless any mask-processing options are enabled, in which case it exports the processed mask.
+- `--mask-source {raw|processed|auto}`: Choose the mask used for tracing. `auto` (default) uses the raw matte unless any mask-processing options are enabled, in which case it uses the processed mask.
 - `--color-mode {color,binary}`: Color mode (default `binary`).
 - `--hierarchy {stacked,cutout}`: Hierarchy strategy (default `stacked`).
 - `--mode {none,polygon,spline}`: Path simplification mode (default `spline`).
@@ -154,7 +163,7 @@ fn generate_assets() -> outline::OutlineResult<()> {
 }
 ```
 
-> VtracerSvgVectorizer is only available when the `vectorizer-vtracer` feature is enabled. You can use your own vectorizer by implementing the `SvgVectorizer` trait to avoid depending on VTracer directly.
+> VtracerSvgVectorizer is only available when the `vectorizer-vtracer` feature is enabled. You can use your own vectorizer by implementing the `MaskVectorizer` trait to avoid depending on VTracer directly.
 
 ## Next Steps
 

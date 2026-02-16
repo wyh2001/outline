@@ -10,7 +10,7 @@ use ort::session::builder::GraphOptimizationLevel;
 use ort::value::Tensor;
 
 use crate::config::InferenceSettings;
-use crate::error::OutlineResult;
+use crate::error::{OutlineError, OutlineResult};
 use crate::mask::array_to_gray_image;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -39,8 +39,8 @@ pub fn determine_model_input_spec(session: &Session) -> ModelInputSpec {
 
 /// Infer the model input spec from the ONNX session input tensor shape.
 fn infer_model_input_spec(session: &Session) -> Option<ModelInputSpec> {
-    let input = session.inputs.first()?;
-    let shape = input.input_type.tensor_shape()?;
+    let input = session.inputs().first()?;
+    let shape = input.dtype().tensor_shape()?;
     let dims: &[i64] = shape;
 
     if dims.len() >= 4 {
@@ -216,6 +216,12 @@ pub fn run_matte_pipeline(
     settings: &InferenceSettings,
     image_path: &Path,
 ) -> OutlineResult<(RgbImage, GrayImage)> {
+    if !settings.model_path.is_file() {
+        return Err(OutlineError::ModelNotFound {
+            path: settings.model_path.clone(),
+        });
+    }
+
     let mut builder =
         Session::builder()?.with_optimization_level(GraphOptimizationLevel::Level3)?;
     if let Some(n) = settings.intra_threads {

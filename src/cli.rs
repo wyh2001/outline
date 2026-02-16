@@ -25,10 +25,9 @@ pub struct GlobalOptions {
         long,
         global = true,
         env = outline::ENV_MODEL_PATH,
-        value_hint = ValueHint::FilePath,
-        default_value = outline::DEFAULT_MODEL_PATH
+        value_hint = ValueHint::FilePath
     )]
-    pub model: PathBuf,
+    pub model: Option<PathBuf>,
     /// Intra-op thread count for ORT (None to let ORT decide)
     #[arg(long, global = true)]
     pub intra_threads: Option<usize>,
@@ -48,6 +47,9 @@ pub enum Commands {
     Cut(CutCommand),
     /// Trace the subject into an SVG outline
     Trace(TraceCommand),
+    /// Download the default model from the network
+    #[cfg(feature = "fetch-model")]
+    FetchModel(FetchModelCommand),
 }
 
 /// Resampling filters for image resizing.
@@ -121,6 +123,18 @@ pub struct TraceCommand {
     pub mask_processing: MaskProcessingArgs,
     #[command(flatten)]
     pub trace_options: TraceOptionsArgs,
+}
+
+/// Command to download the default model.
+#[cfg(feature = "fetch-model")]
+#[derive(Args, Debug, Clone)]
+pub struct FetchModelCommand {
+    /// Output path for the downloaded model
+    #[arg(short, long, value_hint = ValueHint::FilePath)]
+    pub output: Option<PathBuf>,
+    /// Overwrite existing model file
+    #[arg(long)]
+    pub force: bool,
 }
 
 #[derive(Args, Debug)]
@@ -985,6 +999,55 @@ mod tests {
                     ]);
                     assert!(result.is_err());
                 }
+            }
+        }
+
+        /// Integration tests for model path resolution priority through clap.
+        ///
+        /// Priority: --model flag > OUTLINE_MODEL_PATH env var > (downstream: cached > default)
+        mod model_path_priority {
+            use super::*;
+            use clap::Parser;
+            use std::sync::Mutex;
+
+            // Serialize env-var tests so they don't race each other.
+            static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+            #[test]
+            fn flag_sets_model() {
+                let cli = Cli::try_parse_from(["outline", "-m", "flag.onnx", "mask", "input.png"])
+                    .unwrap();
+                assert_eq!(cli.global.model, Some(PathBuf::from("flag.onnx")));
+            }
+
+            #[test]
+            fn env_var_sets_model() {
+                let _lock = ENV_LOCK.lock().unwrap();
+                // SAFETY: serialized by ENV_LOCK; no other thread reads this var concurrently.
+                unsafe { std::env::set_var(outline::ENV_MODEL_PATH, "env.onnx") };
+                let cli = Cli::try_parse_from(["outline", "mask", "input.png"]).unwrap();
+                unsafe { std::env::remove_var(outline::ENV_MODEL_PATH) };
+                assert_eq!(cli.global.model, Some(PathBuf::from("env.onnx")));
+            }
+
+            #[test]
+            fn flag_overrides_env_var() {
+                let _lock = ENV_LOCK.lock().unwrap();
+                // SAFETY: serialized by ENV_LOCK; no other thread reads this var concurrently.
+                unsafe { std::env::set_var(outline::ENV_MODEL_PATH, "env.onnx") };
+                let cli = Cli::try_parse_from(["outline", "-m", "flag.onnx", "mask", "input.png"])
+                    .unwrap();
+                unsafe { std::env::remove_var(outline::ENV_MODEL_PATH) };
+                assert_eq!(cli.global.model, Some(PathBuf::from("flag.onnx")));
+            }
+
+            #[test]
+            fn neither_flag_nor_env_gives_none() {
+                let _lock = ENV_LOCK.lock().unwrap();
+                // SAFETY: serialized by ENV_LOCK; no other thread reads this var concurrently.
+                unsafe { std::env::remove_var(outline::ENV_MODEL_PATH) };
+                let cli = Cli::try_parse_from(["outline", "mask", "input.png"]).unwrap();
+                assert_eq!(cli.global.model, None);
             }
         }
     }

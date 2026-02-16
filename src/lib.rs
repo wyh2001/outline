@@ -1,3 +1,29 @@
+//! # Outline
+//!
+//! Image background removal with flexible mask processing options.
+//!
+//! Powered by ONNX Runtime ([`ort`](https://docs.rs/ort)) and VTracer, and works with U2-Net, BiRefNet,
+//! and other ONNX models with a compatible input/output shape.
+//!
+//! # Quick Start
+//!
+//! ```no_run
+//! use outline::Outline;
+//!
+//! let outline = Outline::new("model.onnx");
+//! let session = outline.for_image("input.png")?;
+//! let matte = session.matte();
+//!
+//! // Compose the foreground directly from the raw matte (soft edges)
+//! let foreground = matte.foreground()?;
+//! foreground.save("foreground.png")?;
+//!
+//! // Process the mask and save it
+//! let mask = matte.blur().threshold().processed()?;
+//! mask.save("mask.png")?;
+//! # Ok::<_, outline::OutlineError>(())
+//! ```
+
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 mod config;
@@ -45,6 +71,7 @@ pub struct Outline {
 }
 
 impl Outline {
+    /// Create a new `Outline` instance with the given model path and default settings.
     pub fn new(model_path: impl Into<PathBuf>) -> Self {
         Self {
             settings: InferenceSettings::new(model_path),
@@ -124,14 +151,16 @@ impl Outline {
 /// use outline::Outline;
 ///
 /// let outline = Outline::new("model.onnx");
-/// let session = outline.for_image("input.jpg")?;
+/// let session = outline.for_image("input.png")?;
+/// let matte = session.matte();
 ///
 /// // Access the original image and raw matte directly
 /// let rgb = session.rgb_image();
 /// let raw_matte = session.raw_matte();
 ///
-/// // Begin building a processing pipeline
-/// let matte = session.matte();
+/// // Compose the foreground from the raw matte
+/// let foreground = matte.foreground()?;
+/// foreground.save("foreground.png")?;
 /// # Ok::<_, outline::OutlineError>(())
 /// ```
 #[derive(Debug, Clone)]
@@ -164,6 +193,7 @@ impl InferencedMatte {
         self.raw_matte.as_ref()
     }
 
+    /// Begin building a mask processing pipeline from the raw matte.
     pub fn matte(&self) -> MatteHandle {
         MatteHandle {
             rgb_image: Arc::clone(&self.rgb_image),
@@ -534,5 +564,87 @@ impl ForegroundHandle {
     pub fn save(&self, path: impl AsRef<Path>) -> OutlineResult<()> {
         self.image.save(path)?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    // Serialize env-var tests so they don't race each other.
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    mod outline_new {
+        use super::*;
+
+        #[test]
+        fn user_value_is_stored_directly() {
+            let outline = Outline::new("/explicit/model.onnx");
+            assert_eq!(
+                outline.settings.model_path,
+                PathBuf::from("/explicit/model.onnx")
+            );
+        }
+
+        #[test]
+        fn user_value_ignores_env_var() {
+            let _lock = ENV_LOCK.lock().unwrap();
+            // SAFETY: serialized by ENV_LOCK; no other thread reads this var concurrently.
+            unsafe { std::env::set_var(ENV_MODEL_PATH, "env.onnx") };
+            let outline = Outline::new("user.onnx");
+            unsafe { std::env::remove_var(ENV_MODEL_PATH) };
+            assert_eq!(outline.settings.model_path, PathBuf::from("user.onnx"));
+        }
+    }
+
+    mod outline_from_env_or_default {
+        use super::*;
+
+        #[test]
+        fn uses_env_var_when_set() {
+            let _lock = ENV_LOCK.lock().unwrap();
+            // SAFETY: serialized by ENV_LOCK; no other thread reads this var concurrently.
+            unsafe { std::env::set_var(ENV_MODEL_PATH, "/from/env.onnx") };
+            let outline = Outline::from_env_or_default();
+            unsafe { std::env::remove_var(ENV_MODEL_PATH) };
+            assert_eq!(outline.settings.model_path, PathBuf::from("/from/env.onnx"));
+        }
+
+        #[test]
+        fn falls_back_to_default_when_env_unset() {
+            let _lock = ENV_LOCK.lock().unwrap();
+            // SAFETY: serialized by ENV_LOCK; no other thread reads this var concurrently.
+            unsafe { std::env::remove_var(ENV_MODEL_PATH) };
+            let outline = Outline::from_env_or_default();
+            assert_eq!(
+                outline.settings.model_path,
+                PathBuf::from(DEFAULT_MODEL_PATH)
+            );
+        }
+    }
+
+    mod outline_try_from_env {
+        use super::*;
+
+        #[test]
+        fn succeeds_when_env_set() {
+            let _lock = ENV_LOCK.lock().unwrap();
+            // SAFETY: serialized by ENV_LOCK; no other thread reads this var concurrently.
+            unsafe { std::env::set_var(ENV_MODEL_PATH, "/from/env.onnx") };
+            let result = Outline::try_from_env();
+            unsafe { std::env::remove_var(ENV_MODEL_PATH) };
+            let outline = result.expect("should succeed when env is set");
+            assert_eq!(outline.settings.model_path, PathBuf::from("/from/env.onnx"));
+        }
+
+        #[test]
+        fn errors_when_env_unset() {
+            let _lock = ENV_LOCK.lock().unwrap();
+            // SAFETY: serialized by ENV_LOCK; no other thread reads this var concurrently.
+            unsafe { std::env::remove_var(ENV_MODEL_PATH) };
+            let result = Outline::try_from_env();
+            assert!(result.is_err());
+        }
     }
 }

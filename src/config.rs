@@ -6,6 +6,9 @@ use image::imageops::FilterType;
 pub const ENV_MODEL_PATH: &str = "OUTLINE_MODEL_PATH";
 
 /// Default model path used when no explicit path is provided.
+///
+/// This is the fallback when neither `--model` nor `OUTLINE_MODEL_PATH` is set.
+/// By default it points to `model.onnx` in the current working directory.
 pub const DEFAULT_MODEL_PATH: &str = "model.onnx";
 
 /// Configuration for ONNX model inference and image preprocessing.
@@ -73,12 +76,19 @@ impl InferenceSettings {
 /// maximum control and predictability.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MaskProcessingOptions {
+    /// Whether to apply binary thresholding to the mask.
     pub binary: bool,
+    /// Whether to apply Gaussian blur to the mask.
     pub blur: bool,
+    /// Standard deviation (sigma) for Gaussian blur.
     pub blur_sigma: f32,
+    /// Threshold value (0–255) used for binary conversion and hole-filling.
     pub mask_threshold: u8,
+    /// Whether to dilate the mask using a Euclidean distance transform.
     pub dilate: bool,
+    /// Radius in pixels for the dilation operation.
     pub dilation_radius: f32,
+    /// Whether to fill interior holes in the binary mask.
     pub fill_holes: bool,
 }
 
