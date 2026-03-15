@@ -125,9 +125,9 @@ The raw matte (soft mask) preserves the grayscale alpha predicted by the model. 
 ### Library Usage
 
 ```bash
-cargo add outline-core --version 0.1.0-alpha.1
+cargo add outline-core
 # or use this if VtracerSvgVectorizer is needed:
-cargo add outline-core --version 0.1.0-alpha.1 --features vectorizer-vtracer
+cargo add outline-core --features vectorizer-vtracer
 ```
 
 ```rust
