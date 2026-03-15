@@ -359,7 +359,7 @@ impl MatteHandle {
 ///
 /// # Example
 /// ```no_run
-/// use outline::{Outline, VtracerSvgVectorizer, TraceOptions};
+/// use outline::Outline;
 ///
 /// let outline = Outline::new("model.onnx");
 /// let session = outline.for_image("input.jpg")?;
@@ -368,12 +368,11 @@ impl MatteHandle {
 /// // Generate multiple outputs from the mask
 /// mask.save("mask.png")?;
 /// mask.foreground()?.save("subject.png")?;
-///
-/// let vectorizer = VtracerSvgVectorizer;
-/// let svg = mask.trace(&vectorizer, &TraceOptions::default())?;
-/// std::fs::write("outline.svg", svg)?;
 /// # Ok::<_, outline::OutlineError>(())
 /// ```
+///
+/// To trace the mask into SVG, pass a [`MaskVectorizer`] implementation to [`MaskHandle::trace`].
+/// The crate re-exports `VtracerSvgVectorizer` when the `vectorizer-vtracer` feature is enabled.
 #[derive(Debug, Clone)]
 pub struct MaskHandle {
     rgb_image: Arc<RgbImage>,

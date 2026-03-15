@@ -8,15 +8,23 @@ It is written in Rust, powered by ONNX Runtime (ort) and VTracer, and works with
 
 ## Installation
 
+### CLI
 ```bash
-cargo install outline-core
+cargo install outline-core --features cli
 ```
 
 For the CLI, you can also install with `--features fetch-model` to enable one-command model downloading:
 
 ```bash
-cargo install outline-core --features fetch-model
+cargo install outline-core --features "cli fetch-model"
 outline fetch-model
+```
+
+### Library
+```bash
+cargo add outline-core
+# or use this if VtracerSvgVectorizer is needed:
+cargo add outline-core --features vectorizer-vtracer
 ```
 
 ## Usage
@@ -123,12 +131,6 @@ The raw matte (soft mask) preserves the grayscale alpha predicted by the model. 
 </details>
 
 ### Library Usage
-
-```bash
-cargo add outline-core --version 0.1.0-alpha.1
-# or use this if VtracerSvgVectorizer is needed:
-cargo add outline-core --version 0.1.0-alpha.1 --features vectorizer-vtracer
-```
 
 ```rust
 use outline::{MaskProcessingOptions, Outline, TraceOptions, VtracerSvgVectorizer};
