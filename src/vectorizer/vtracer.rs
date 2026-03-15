@@ -49,6 +49,20 @@ impl Default for TraceOptions {
 ///
 /// Implements [`MaskVectorizer`] to provide path tracing functionality. Pair with
 /// [`TraceOptions`] to control output style and precision.
+///
+/// # Example
+/// ```no_run
+/// use outline::{Outline, TraceOptions, VtracerSvgVectorizer};
+///
+/// let outline = Outline::new("model.onnx");
+/// let session = outline.for_image("input.jpg")?;
+/// let mask = session.matte().blur().threshold().processed()?;
+///
+/// let vectorizer = VtracerSvgVectorizer;
+/// let svg = mask.trace(&vectorizer, &TraceOptions::default())?;
+/// std::fs::write("outline.svg", svg)?;
+/// # Ok::<_, outline::OutlineError>(())
+/// ```
 #[derive(Debug, Clone, Copy, Default)]
 pub struct VtracerSvgVectorizer;
 
