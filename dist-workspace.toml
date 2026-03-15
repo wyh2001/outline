@@ -7,6 +7,8 @@ members = ["cargo:."]
 cargo-dist-version = "0.30.3"
 # Features to pass to cargo when building artifacts
 features = ["cli"]
+# Build and upload PR artifacts without publishing a release
+pr-run-mode = "upload"
 # CI backends to support
 ci = "github"
 # The installers to generate for each app
