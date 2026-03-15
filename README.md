@@ -9,13 +9,13 @@ It is written in Rust, powered by ONNX Runtime (ort) and VTracer, and works with
 ## Installation
 
 ```bash
-cargo install outline-core
+cargo install outline-core --features cli
 ```
 
 For the CLI, you can also install with `--features fetch-model` to enable one-command model downloading:
 
 ```bash
-cargo install outline-core --features fetch-model
+cargo install outline-core --features "cli fetch-model"
 outline fetch-model
 ```
 
