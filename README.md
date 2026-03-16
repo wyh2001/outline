@@ -133,7 +133,7 @@ The raw matte (soft mask) preserves the grayscale alpha predicted by the model. 
 ### Library Usage
 
 ```rust
-use outline::{MaskProcessingOptions, Outline, TraceOptions, VtracerSvgVectorizer};
+use outline::{MaskProcessingOptions, Outline};
 
 fn generate_assets() -> outline::OutlineResult<()> {
 	let outline = Outline::new("model.onnx") // or: Outline::try_from_env()
@@ -157,15 +157,34 @@ fn generate_assets() -> outline::OutlineResult<()> {
 	let foreground_processed = mask.foreground()?;
 	foreground_processed.save("input-foreground-processed.png")?;
 
-	let vectorizer = VtracerSvgVectorizer;
-	let svg = mask.trace(&vectorizer, &TraceOptions::default())?;
-	std::fs::write("input.svg", svg)?;
-
 	Ok(())
 }
 ```
 
-> VtracerSvgVectorizer is only available when the `vectorizer-vtracer` feature is enabled. You can use your own vectorizer by implementing the `MaskVectorizer` trait to avoid depending on VTracer directly.
+#### Optional SVG Tracing
+
+Enable `vectorizer-vtracer` if you want to trace masks into SVG:
+
+```bash
+cargo add outline-core --features vectorizer-vtracer
+```
+
+```rust
+use outline::{Outline, TraceOptions, VtracerSvgVectorizer};
+
+fn trace_mask() -> outline::OutlineResult<()> {
+	let outline = Outline::new("model.onnx");
+	let session = outline.for_image("input.png")?;
+	let mask = session.matte().blur().threshold().processed()?;
+
+	let vectorizer = VtracerSvgVectorizer;
+	let svg = mask.trace(&vectorizer, &TraceOptions::default())?;
+	std::fs::write("input.svg", svg)?;
+	Ok(())
+}
+```
+
+You can also avoid depending on VTracer directly by implementing the `MaskVectorizer` trait with your own vectorizer.
 
 ## Next Steps
 
