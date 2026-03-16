@@ -27,6 +27,55 @@ cargo add outline-core
 cargo add outline-core --features vectorizer-vtracer
 ```
 
+<details>
+<summary><strong>Advanced: Custom ONNX Runtime Setup</strong></summary>
+
+Most users do not need this section. By default, `outline-core` enables
+`ort-download-binaries`, so `ort` downloads a prebuilt ONNX Runtime package for supported
+targets. In some environments, the prebuilt runtime may run into
+compatibility issues.
+
+If your environment needs a different runtime strategy, use one of these supported paths:
+
+```bash
+# Discover a system installation via pkg-config
+cargo add outline-core --no-default-features --features ort-pkg-config
+
+# Dynamically load a specific .so/.dylib/.dll at runtime
+cargo add outline-core --no-default-features --features ort-load-dynamic
+
+# Link against a custom ONNX Runtime build from a known directory
+ORT_LIB_LOCATION=/opt/onnxruntime/lib cargo build
+
+# Disable the download fallback entirely when you require a non-default runtime setup
+cargo add outline-core --no-default-features
+
+# Prefer shared-library linking for a custom build
+ORT_LIB_LOCATION=/opt/onnxruntime/lib ORT_PREFER_DYNAMIC_LINK=1 cargo build
+```
+
+For `ort-load-dynamic`, initialize ONNX Runtime before using `Outline`, or set
+`ORT_DYLIB_PATH` before the first ORT API use:
+
+```rust
+let filename = format!(
+    "{}onnxruntime{}",
+    std::env::consts::DLL_PREFIX,
+    std::env::consts::DLL_SUFFIX
+);
+let committed = outline::runtime::init_onnx_runtime_from(format!("/opt/onnxruntime/lib/{filename}"))?;
+assert!(committed);
+```
+
+`outline-core` exposes the relevant environment variable names as
+`outline::runtime::ENV_ORT_DYLIB_PATH`,
+`outline::runtime::ENV_ORT_LIB_LOCATION`, and
+`outline::runtime::ENV_ORT_PREFER_DYNAMIC_LINK`.
+See the upstream `ort` linking guide for platform-specific details:
+https://ort.pyke.io/setup/linking
+
+</details>
+
 ## Usage
 
 Outline works as both a library and a CLI.
