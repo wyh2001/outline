@@ -8,22 +8,26 @@ description = "Image background removal with flexible mask processing options"
 exclude = ["tests/fixtures/identity.ort"]
 
 [features]
-default = []
-cli = ["clap", "vectorizer-vtracer"]
+default = ["ort-download-binaries"]
+cli = ["clap", "vectorizer-vtracer", "ort-copy-dylibs"]
 vectorizer-vtracer = ["dep:vtracer", "dep:visioncortex"]
 fetch-model = ["dep:ureq", "dep:indicatif", "dep:sha2", "dep:dirs"]
+ort-download-binaries = ["ort/download-binaries", "ort/tls-native"]
+ort-load-dynamic = ["ort/load-dynamic"]
+ort-pkg-config = ["ort/pkg-config"]
+ort-copy-dylibs = ["ort/copy-dylibs"]
 
 [lib]
 name = "outline"
 path = "src/lib.rs"
 
 [package.metadata.docs.rs]
-all-features = true
+features = ["cli", "fetch-model", "ort-load-dynamic", "ort-pkg-config"]
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
 image = "0.25.9"
-ort = "=2.0.0-rc.11"
+ort = { version = "=2.0.0-rc.11", default-features = false, features = ["std", "ndarray", "tracing"] }
 vtracer = { version = "0.6.5", optional = true }
 ndarray = "0.17"
 visioncortex = { version = "0.8.10", optional = true }
