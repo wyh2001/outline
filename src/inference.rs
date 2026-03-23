@@ -1,6 +1,7 @@
 use std::convert::TryFrom;
 use std::io;
 use std::path::Path;
+use std::sync::Mutex;
 
 use image::imageops::FilterType;
 use image::{DynamicImage, GrayImage, ImageBuffer, ImageDecoder, ImageReader, Luma, RgbImage};
@@ -31,6 +32,67 @@ pub const DEFAULT_MODEL_INPUT_SPEC: ModelInputSpec = ModelInputSpec {
     height: 320,
     layout: ChannelLayout::Nchw,
 };
+
+/// Lazily cached ONNX Runtime session plus the derived input spec.
+#[derive(Debug)]
+pub struct CachedInferenceSession {
+    session: Mutex<Session>,
+    input_spec: ModelInputSpec,
+}
+
+impl CachedInferenceSession {
+    /// Create a cached ONNX Runtime session and derive the model input spec once.
+    pub fn new(settings: &InferenceSettings) -> OutlineResult<Self> {
+        if !settings.model_path.is_file() {
+            return Err(OutlineError::ModelNotFound {
+                path: settings.model_path.clone(),
+            });
+        }
+
+        let mut builder =
+            Session::builder()?.with_optimization_level(GraphOptimizationLevel::Level3)?;
+        if let Some(n) = settings.intra_threads {
+            builder = builder.with_intra_threads(n)?;
+        }
+        let session = builder.commit_from_file(&settings.model_path)?;
+        let input_spec = determine_model_input_spec(&session);
+
+        Ok(Self {
+            session: Mutex::new(session),
+            input_spec,
+        })
+    }
+
+    /// Run the full matte inference pipeline using this cached session.
+    pub fn run_matte_pipeline(
+        &self,
+        settings: &InferenceSettings,
+        image_path: &Path,
+    ) -> OutlineResult<(RgbImage, GrayImage)> {
+        let rgb_input = load_rgb_with_orientation(image_path)?;
+        let orig_w = rgb_input.width();
+        let orig_h = rgb_input.height();
+
+        let input_tensor =
+            preprocess_image_to_tensor(&rgb_input, settings.input_resize_filter, self.input_spec)?;
+        let matte_hw = self.run_model(input_tensor)?;
+        let matte_orig = resize_matte(&matte_hw, orig_w, orig_h, settings.output_resize_filter)?;
+        let raw_matte = array_to_gray_image(&matte_orig);
+
+        Ok((rgb_input, raw_matte))
+    }
+
+    /// Execute the model for one preprocessed input tensor while holding the session lock.
+    fn run_model(&self, input_tensor: Tensor<f32>) -> OutlineResult<Array2<f32>> {
+        let mut session = self
+            .session
+            .lock()
+            .map_err(|_| io::Error::other("cached inference session mutex poisoned"))?;
+        let outputs = session.run(ort::inputs![input_tensor])?;
+        let matte = outputs[0].try_extract_array::<f32>()?;
+        extract_matte_hw(matte)
+    }
+}
 
 /// Try to figure out the model input spec from the session and falls back to the default.
 pub fn determine_model_input_spec(session: &Session) -> ModelInputSpec {
@@ -209,38 +271,4 @@ pub fn resize_matte(
         out[[y as usize, x as usize]] = pixel[0];
     }
     Ok(out)
-}
-
-/// Run the full matte inference pipeline and return the RGB image and raw matte.
-pub fn run_matte_pipeline(
-    settings: &InferenceSettings,
-    image_path: &Path,
-) -> OutlineResult<(RgbImage, GrayImage)> {
-    if !settings.model_path.is_file() {
-        return Err(OutlineError::ModelNotFound {
-            path: settings.model_path.clone(),
-        });
-    }
-
-    let mut builder =
-        Session::builder()?.with_optimization_level(GraphOptimizationLevel::Level3)?;
-    if let Some(n) = settings.intra_threads {
-        builder = builder.with_intra_threads(n)?;
-    }
-    let mut session = builder.commit_from_file(&settings.model_path)?;
-
-    let rgb_input = load_rgb_with_orientation(image_path)?;
-    let orig_w = rgb_input.width();
-    let orig_h = rgb_input.height();
-
-    let input_spec = determine_model_input_spec(&session);
-    let input_tensor =
-        preprocess_image_to_tensor(&rgb_input, settings.input_resize_filter, input_spec)?;
-    let outputs = session.run(ort::inputs![input_tensor])?;
-    let matte = outputs[0].try_extract_array::<f32>()?;
-    let matte_hw = extract_matte_hw(matte)?;
-    let matte_orig = resize_matte(&matte_hw, orig_w, orig_h, settings.output_resize_filter)?;
-    let raw_matte = array_to_gray_image(&matte_orig);
-
-    Ok((rgb_input, raw_matte))
 }

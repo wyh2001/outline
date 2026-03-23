@@ -48,13 +48,13 @@ pub use vectorizer::vtracer::{TraceOptions, VtracerSvgVectorizer, trace_to_svg_s
 
 use std::path::Path;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use image::imageops::FilterType;
 use image::{GrayImage, RgbImage, RgbaImage};
 
 use crate::foreground::compose_foreground;
-use crate::inference::run_matte_pipeline;
+use crate::inference::CachedInferenceSession;
 use crate::mask::{MaskOperation, apply_operations, operations_from_options};
 
 /// Entry point for configuring and running background matting inference.
@@ -62,12 +62,26 @@ use crate::mask::{MaskOperation, apply_operations, operations_from_options};
 /// This is the main interface for loading an ONNX model and processing images to extract
 /// foreground subjects. Configure model path, inference settings, and default mask processing
 /// options, then call [`for_image`](Outline::for_image) to run inference on individual images.
-#[derive(Debug, Clone)]
+///
+/// Each `Outline` instance lazily initializes and reuses its ONNX Runtime session.
+#[derive(Debug)]
 pub struct Outline {
     /// Inference settings for model and image handling.
     settings: InferenceSettings,
     /// If nothing is specified and processing is requested, these options will be used.
     default_mask_processing: MaskProcessingOptions,
+    /// Lazily initialized cached session for this configured model.
+    cached_session: Mutex<Option<Arc<CachedInferenceSession>>>,
+}
+
+impl Clone for Outline {
+    fn clone(&self) -> Self {
+        Self {
+            settings: self.settings.clone(),
+            default_mask_processing: self.default_mask_processing.clone(),
+            cached_session: Mutex::new(None),
+        }
+    }
 }
 
 impl Outline {
@@ -76,6 +90,7 @@ impl Outline {
         Self {
             settings: InferenceSettings::new(model_path),
             default_mask_processing: MaskProcessingOptions::default(),
+            cached_session: Mutex::new(None),
         }
     }
 
@@ -115,7 +130,10 @@ impl Outline {
 
     /// Set the number of intra-op threads for the inference.
     pub fn with_intra_threads(mut self, intra_threads: Option<usize>) -> Self {
-        self.settings.intra_threads = intra_threads;
+        if self.settings.intra_threads != intra_threads {
+            self.settings.intra_threads = intra_threads;
+            self.cached_session = Mutex::new(None);
+        }
         self
     }
 
@@ -130,10 +148,26 @@ impl Outline {
         &self.default_mask_processing
     }
 
-    /// Run the inference pipeline for a single image, returning the orginal image, raw matte, and processing options,
+    fn get_or_init_cached_session(&self) -> OutlineResult<Arc<CachedInferenceSession>> {
+        let mut cached_session = self
+            .cached_session
+            .lock()
+            .map_err(|_| std::io::Error::other("outline session cache mutex poisoned"))?;
+
+        if let Some(session) = cached_session.as_ref() {
+            return Ok(Arc::clone(session));
+        }
+
+        let session = Arc::new(CachedInferenceSession::new(&self.settings)?);
+        *cached_session = Some(Arc::clone(&session));
+        Ok(session)
+    }
+
+    /// Run the inference pipeline for a single image, returning the original image, raw matte, and processing options,
     /// wrapped in an `InferencedMatte`.
     pub fn for_image(&self, image_path: impl AsRef<Path>) -> OutlineResult<InferencedMatte> {
-        let (rgb, matte) = run_matte_pipeline(&self.settings, image_path.as_ref())?;
+        let session = self.get_or_init_cached_session()?;
+        let (rgb, matte) = session.run_matte_pipeline(&self.settings, image_path.as_ref())?;
         Ok(InferencedMatte::new(
             rgb,
             matte,
@@ -569,10 +603,27 @@ impl ForegroundHandle {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
     use std::sync::Mutex;
+    use tempfile::NamedTempFile;
 
     // Serialize env-var tests so they don't race each other.
     static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    // Embed the tiny ORT-format identity model into test binaries so tests remain self-contained.
+    const ORT_IDENTITY_MODEL_BYTES: &[u8] = include_bytes!("../tests/fixtures/identity.ort");
+
+    fn ort_identity_model_file() -> NamedTempFile {
+        let mut file = tempfile::Builder::new()
+            .suffix(".ort")
+            .tempfile()
+            .expect("failed to create temporary identity model");
+        file.write_all(ORT_IDENTITY_MODEL_BYTES)
+            .expect("failed to write temporary identity model");
+        file.flush()
+            .expect("failed to flush temporary identity model");
+        file
+    }
 
     mod outline_new {
         use super::*;
@@ -644,6 +695,73 @@ mod tests {
             unsafe { std::env::remove_var(ENV_MODEL_PATH) };
             let result = Outline::try_from_env();
             assert!(result.is_err());
+        }
+    }
+
+    mod outline_session_cache {
+        use super::*;
+
+        #[test]
+        fn session_is_reused_within_same_outline() {
+            let model = ort_identity_model_file();
+            let outline = Outline::new(model.path());
+
+            let first = outline
+                .get_or_init_cached_session()
+                .expect("should initialize cached session");
+            let second = outline
+                .get_or_init_cached_session()
+                .expect("should reuse cached session");
+
+            assert!(Arc::ptr_eq(&first, &second));
+        }
+
+        #[test]
+        fn clone_starts_with_fresh_session_cache() {
+            let model = ort_identity_model_file();
+            let outline = Outline::new(model.path());
+            let original = outline
+                .get_or_init_cached_session()
+                .expect("should initialize cached session");
+
+            let cloned = outline.clone();
+            let cloned_session = cloned
+                .get_or_init_cached_session()
+                .expect("should initialize cloned cached session");
+
+            assert!(!Arc::ptr_eq(&original, &cloned_session));
+        }
+
+        #[test]
+        fn non_session_settings_keep_cached_session() {
+            let model = ort_identity_model_file();
+            let outline = Outline::new(model.path());
+            let cached = outline
+                .get_or_init_cached_session()
+                .expect("should initialize cached session");
+
+            let outline = outline.with_input_resize_filter(FilterType::Nearest);
+            let reused = outline
+                .get_or_init_cached_session()
+                .expect("should reuse cached session for non-session setting changes");
+
+            assert!(Arc::ptr_eq(&cached, &reused));
+        }
+
+        #[test]
+        fn intra_threads_change_clears_cached_session() {
+            let model = ort_identity_model_file();
+            let outline = Outline::new(model.path());
+            let cached = outline
+                .get_or_init_cached_session()
+                .expect("should initialize cached session");
+
+            let outline = outline.with_intra_threads(Some(1));
+            let rebuilt = outline
+                .get_or_init_cached_session()
+                .expect("should rebuild cached session after thread change");
+
+            assert!(!Arc::ptr_eq(&cached, &rebuilt));
         }
     }
 }
