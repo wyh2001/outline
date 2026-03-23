@@ -6,6 +6,14 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  ORT_VERSION: 1.23.2
+  ORT_ROOT: .ci
+  ORT_DIR: .ci/onnxruntime
+  ORT_PKGCONFIG_DIR: .ci/pkgconfig
+  ORT_ASSET_ARCHIVE: .ci/ort-assets.tgz
+  ORT_ARCHIVE: onnxruntime-linux-x64-1.23.2.tgz
+  ORT_URL: https://github.com/microsoft/onnxruntime/releases/download/v1.23.2/onnxruntime-linux-x64-1.23.2.tgz
+  ORT_SHA256: 1fa4dcaef22f6f7d5cd81b28c2800414350c10116f5fdd46a2160082551c5f9b
 
 jobs:
   build:
@@ -13,7 +21,7 @@ jobs:
     strategy:
       matrix:
         features:
-          - ""               # default features only
+          - "" # default features only
           - "--all-features" # all features enabled
 
     steps:
@@ -22,3 +30,126 @@ jobs:
         run: cargo build --verbose ${{ matrix.features }}
       - name: Run tests
         run: cargo test --verbose ${{ matrix.features }}
+
+  prepare-ort-runtime:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Cache ONNX Runtime
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.ORT_ROOT }}
+          key: ort-${{ runner.os }}-${{ runner.arch }}-${{ env.ORT_VERSION }}-${{ env.ORT_SHA256 }}
+
+      - name: Download ONNX Runtime Archive
+        run: |
+          set -euxo pipefail
+          mkdir -p "${ORT_ROOT}"
+          if [ ! -f "${ORT_ROOT}/${ORT_ARCHIVE}" ]; then
+            curl -L --fail --retry 3 -o "${ORT_ROOT}/${ORT_ARCHIVE}" "${ORT_URL}"
+          fi
+
+      - name: Verify ONNX Runtime Archive Checksum
+        run: |
+          set -euxo pipefail
+          echo "${ORT_SHA256}  ${ORT_ROOT}/${ORT_ARCHIVE}" | sha256sum -c -
+
+      - name: Extract ONNX Runtime
+        run: |
+          set -euxo pipefail
+          if [ ! -e "${ORT_DIR}/lib/libonnxruntime.so" ]; then
+            rm -rf "${ORT_DIR}" "${ORT_ROOT}/onnxruntime-linux-x64-${ORT_VERSION}"
+            tar -xzf "${ORT_ROOT}/${ORT_ARCHIVE}" -C "${ORT_ROOT}"
+            mv -T "${ORT_ROOT}/onnxruntime-linux-x64-${ORT_VERSION}" "${ORT_DIR}"
+          fi
+
+      - name: Generate pkg-config File
+        run: |
+          set -euxo pipefail
+          mkdir -p "${ORT_PKGCONFIG_DIR}"
+          cat > "${ORT_PKGCONFIG_DIR}/libonnxruntime.pc" <<EOF
+          prefix=${GITHUB_WORKSPACE}/${ORT_DIR}
+          libdir=\${prefix}/lib
+          includedir=\${prefix}/include
+
+          Name: onnxruntime
+          Description: ONNX runtime
+          URL: https://github.com/microsoft/onnxruntime
+          Version: ${ORT_VERSION}
+          Libs: -L\${libdir} -lonnxruntime
+          Cflags: -I\${includedir}
+          EOF
+
+      - name: Package ONNX Runtime Assets
+        run: |
+          set -euxo pipefail
+          tar -czf "${ORT_ASSET_ARCHIVE}" -C "${ORT_ROOT}" onnxruntime pkgconfig
+
+      - name: Upload ONNX Runtime Assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: ort-runtime-assets
+          path: ${{ env.ORT_ASSET_ARCHIVE }}
+
+  ort-load-dynamic:
+    needs: prepare-ort-runtime
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Define these once and reuse them so all jobs unpack assets the same way.
+      - &download-ort-assets
+        name: Download ONNX Runtime Assets
+        uses: actions/download-artifact@v4
+        with:
+          name: ort-runtime-assets
+          path: ${{ env.ORT_ROOT }}
+
+      - &unpack-ort-assets
+        name: Unpack ONNX Runtime Assets
+        run: |
+          set -euxo pipefail
+          tar -xzf "${ORT_ASSET_ARCHIVE}" -C "${ORT_ROOT}"
+
+      - name: Run dynamic runtime integration tests
+        env:
+          OUTLINE_TEST_ORT_DYLIB: ${{ github.workspace }}/${{ env.ORT_DIR }}/lib/libonnxruntime.so
+          ORT_DYLIB_PATH: ${{ github.workspace }}/${{ env.ORT_DIR }}/lib/libonnxruntime.so
+        run: |
+          cargo test --verbose --test runtime_dynamic --test runtime_dynamic_env --no-default-features --features ort-load-dynamic -- --ignored
+
+  ort-pkg-config:
+    needs: prepare-ort-runtime
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - *download-ort-assets
+
+      - *unpack-ort-assets
+
+      - name: Check pkg-config runtime setup
+        env:
+          PKG_CONFIG_PATH: ${{ github.workspace }}/${{ env.ORT_PKGCONFIG_DIR }}
+        run: |
+          cargo test --verbose --no-default-features --features ort-pkg-config --no-run
+
+  ort-custom-runtime-env:
+    needs: prepare-ort-runtime
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - *download-ort-assets
+
+      - *unpack-ort-assets
+
+      - name: Check custom runtime env setup
+        env:
+          ORT_LIB_LOCATION: ${{ github.workspace }}/${{ env.ORT_DIR }}/lib
+          ORT_PREFER_DYNAMIC_LINK: "1"
+        run: |
+          cargo test --verbose --no-default-features --no-run
