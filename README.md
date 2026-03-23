@@ -36,6 +36,8 @@ targets. In some environments, the prebuilt runtime may run into
 compatibility issues.
 
 If your environment needs a different runtime strategy, use one of these supported paths:
+These runtime strategy features are mutually exclusive, so enable at most one of
+`ort-download-binaries`, `ort-load-dynamic`, or `ort-pkg-config`.
 
 ```bash
 # Discover a system installation via pkg-config

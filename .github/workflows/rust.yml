@@ -6,19 +6,118 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  # ONNX Runtime (Linux x64) archive used by the runtime-strategy CI jobs.
+  # Cached under `ORT_ROOT`, unpacked to `ORT_DIR`, and shared as `ORT_ASSET_ARCHIVE`.
+  ORT_VERSION: 1.23.2
+  ORT_ROOT: .ci
+  ORT_DIR: .ci/onnxruntime
+  ORT_PKGCONFIG_DIR: .ci/pkgconfig
+  ORT_ASSET_ARCHIVE: .ci/ort-assets.tgz
+  ORT_ARCHIVE: onnxruntime-linux-x64-1.23.2.tgz
+  ORT_URL: https://github.com/microsoft/onnxruntime/releases/download/v1.23.2/onnxruntime-linux-x64-1.23.2.tgz
+  ORT_SHA256: 1fa4dcaef22f6f7d5cd81b28c2800414350c10116f5fdd46a2160082551c5f9b
 
 jobs:
   build:
+    name: build (${{ matrix.name }})
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        features:
-          - ""               # default features only
-          - "--all-features" # all features enabled
+        # ONNX Runtime strategy features are mutually exclusive, so the regular build matrix only
+        # covers legal app-facing combinations. Dedicated jobs below validate each runtime setup
+        # and assert that illegal combinations fail to compile.
+        include:
+          - name: default
+            args: "" # default runtime path via ort-download-binaries
+          - name: app-features
+            args: '--features "cli fetch-model"' # optional app-facing features without runtime-strategy conflicts
 
     steps:
       - uses: actions/checkout@v4
       - name: Build
-        run: cargo build --verbose ${{ matrix.features }}
+        run: cargo build --verbose ${{ matrix.args }}
       - name: Run tests
-        run: cargo test --verbose ${{ matrix.features }}
+        run: cargo test --verbose ${{ matrix.args }}
+
+  invalid-runtime-combinations:
+    name: invalid runtime combo (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    env:
+      # Only validate compilation errors here; avoid any runtime downloads.
+      ORT_SKIP_DOWNLOAD: "1"
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: download+dynamic
+            features: "ort-download-binaries ort-load-dynamic"
+          - name: download+pkg-config
+            features: "ort-download-binaries ort-pkg-config"
+          - name: dynamic+pkg-config
+            features: "ort-load-dynamic ort-pkg-config"
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify mutually exclusive runtime features fail to compile
+        run: |
+          set -euxo pipefail
+          if cargo check --verbose --no-default-features --features "${{ matrix.features }}"; then
+            echo "expected cargo check to fail for mutually exclusive runtime features: ${{ matrix.features }}" >&2
+            exit 1
+          fi
+
+  prepare-ort-runtime:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cache ONNX Runtime
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.ORT_ROOT }}
+          key: ort-${{ runner.os }}-${{ runner.arch }}-${{ env.ORT_VERSION }}-${{ env.ORT_SHA256 }}
+
+      - name: Prepare ONNX Runtime Assets
+        run: bash .github/scripts/prepare-ort-runtime.sh
+
+      - name: Upload ONNX Runtime Assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: ort-runtime-assets
+          path: ${{ env.ORT_ASSET_ARCHIVE }}
+
+  ort-runtime:
+    name: ORT runtime (${{ matrix.check }})
+    needs: prepare-ort-runtime
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        check:
+          - dynamic
+          - pkg-config
+          - custom-env
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download ONNX Runtime Assets
+        uses: actions/download-artifact@v4
+        with:
+          name: ort-runtime-assets
+          path: ${{ env.ORT_ROOT }}
+
+      - name: Unpack ONNX Runtime Assets
+        run: tar -xzf "${ORT_ASSET_ARCHIVE}" -C "${ORT_ROOT}"
+
+      - name: Run dynamic runtime integration tests
+        if: matrix.check == 'dynamic'
+        run: bash .github/scripts/run-ort-runtime-dynamic.sh
+
+      - name: Run pkg-config runtime smoke tests
+        if: matrix.check == 'pkg-config'
+        run: bash .github/scripts/run-ort-runtime-pkg-config.sh
+
+      - name: Run custom runtime env smoke tests
+        if: matrix.check == 'custom-env'
+        run: bash .github/scripts/run-ort-runtime-custom-env.sh

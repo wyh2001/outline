@@ -29,7 +29,9 @@
 //! By default, `outline-core` enables the `ort-download-binaries` feature so ONNX Runtime is
 //! downloaded automatically for supported targets.
 //!
-//! If your environment needs a different runtime strategy, `outline-core` exposes it directly:
+//! If your environment needs a different runtime strategy, `outline-core` exposes it directly.
+//! These runtime strategy features are mutually exclusive; enable at most one of
+//! `ort-download-binaries`, `ort-load-dynamic`, or `ort-pkg-config`:
 //! - `ort-pkg-config`: discover a system ONNX Runtime via `pkg-config`
 //! - `ort-load-dynamic`: load a `.dll`/`.so`/`.dylib` at runtime via the
 //!   `runtime::init_onnx_runtime_from` helper in the [`runtime`] module
@@ -39,6 +41,15 @@
 //!   non-default runtime setup
 
 #![cfg_attr(docsrs, feature(doc_cfg))]
+
+#[cfg(any(
+    all(feature = "ort-download-binaries", feature = "ort-load-dynamic"),
+    all(feature = "ort-download-binaries", feature = "ort-pkg-config"),
+    all(feature = "ort-load-dynamic", feature = "ort-pkg-config"),
+))]
+compile_error!(
+    "ONNX Runtime strategy features are mutually exclusive; enable at most one of `ort-download-binaries`, `ort-load-dynamic`, or `ort-pkg-config`."
+);
 
 mod config;
 mod error;
