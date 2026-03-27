@@ -22,7 +22,8 @@ name = "outline"
 path = "src/lib.rs"
 
 [package.metadata.docs.rs]
-features = ["cli", "fetch-model", "ort-load-dynamic", "ort-pkg-config"]
+no-default-features = true
+features = ["cli", "fetch-model", "ort-load-dynamic"]
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
