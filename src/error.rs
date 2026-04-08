@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use ort::session::builder::SessionBuilder;
 use thiserror::Error;
 
 /// Result type alias for operations that may fail with [`OutlineError`].
@@ -40,4 +41,11 @@ pub enum OutlineError {
         /// The path that was searched.
         path: PathBuf,
     },
+}
+
+// Normalize SessionBuilder-specific ORT errors into OutlineError.
+impl From<ort::Error<SessionBuilder>> for OutlineError {
+    fn from(err: ort::Error<SessionBuilder>) -> Self {
+        Self::Ort(err.into())
+    }
 }
