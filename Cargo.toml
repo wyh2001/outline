@@ -5,7 +5,7 @@ edition = "2024"
 repository = "https://github.com/wyh2001/outline"
 license = "MIT"
 description = "Image background removal with flexible mask processing options"
-exclude = ["tests/fixtures/identity.ort"]
+exclude = ["tests/fixtures/identity.ort", ".github/**"]
 
 [features]
 default = ["ort-download-binaries"]
