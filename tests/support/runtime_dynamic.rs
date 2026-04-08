@@ -7,6 +7,7 @@ use ort::session::Session;
 use ort::value::Tensor;
 use tempfile::TempDir;
 
+// CI injects a real shared library path; local runs must set it explicitly.
 pub const ENV_TEST_ORT_DYLIB: &str = "OUTLINE_TEST_ORT_DYLIB";
 
 // Embed a small model file so the test does not depend on external model files.

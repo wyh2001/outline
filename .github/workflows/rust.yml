@@ -6,6 +6,8 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  # ONNX Runtime (Linux x64) archive used by the runtime-strategy CI jobs.
+  # Cached under `ORT_ROOT`, unpacked to `ORT_DIR`, and shared as `ORT_ASSET_ARCHIVE`.
   ORT_VERSION: 1.23.2
   ORT_ROOT: .ci
   ORT_DIR: .ci/onnxruntime
@@ -41,6 +43,7 @@ jobs:
     name: invalid runtime combo (${{ matrix.name }})
     runs-on: ubuntu-latest
     env:
+      # Only validate compilation errors here; avoid any runtime downloads.
       ORT_SKIP_DOWNLOAD: "1"
     strategy:
       fail-fast: false
@@ -67,38 +70,15 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - uses: actions/checkout@v4
       - name: Cache ONNX Runtime
         uses: actions/cache@v4
         with:
           path: ${{ env.ORT_ROOT }}
           key: ort-${{ runner.os }}-${{ runner.arch }}-${{ env.ORT_VERSION }}-${{ env.ORT_SHA256 }}
 
-      - name: Download ONNX Runtime Archive
-        run: |
-          set -euxo pipefail
-          mkdir -p "${ORT_ROOT}"
-          if [ ! -f "${ORT_ROOT}/${ORT_ARCHIVE}" ]; then
-            curl -L --fail --retry 3 -o "${ORT_ROOT}/${ORT_ARCHIVE}" "${ORT_URL}"
-          fi
-
-      - name: Verify ONNX Runtime Archive Checksum
-        run: |
-          set -euxo pipefail
-          echo "${ORT_SHA256}  ${ORT_ROOT}/${ORT_ARCHIVE}" | sha256sum -c -
-
-      - name: Extract ONNX Runtime
-        run: |
-          set -euxo pipefail
-          if [ ! -e "${ORT_DIR}/lib/libonnxruntime.so" ]; then
-            rm -rf "${ORT_DIR}" "${ORT_ROOT}/onnxruntime-linux-x64-${ORT_VERSION}"
-            tar -xzf "${ORT_ROOT}/${ORT_ARCHIVE}" -C "${ORT_ROOT}"
-            mv -T "${ORT_ROOT}/onnxruntime-linux-x64-${ORT_VERSION}" "${ORT_DIR}"
-          fi
-
-      - name: Package ONNX Runtime Assets
-        run: |
-          set -euxo pipefail
-          tar -czf "${ORT_ASSET_ARCHIVE}" -C "${ORT_ROOT}" onnxruntime
+      - name: Prepare ONNX Runtime Assets
+        run: bash .github/scripts/prepare-ort-runtime.sh
 
       - name: Upload ONNX Runtime Assets
         uses: actions/upload-artifact@v4
@@ -128,51 +108,16 @@ jobs:
           path: ${{ env.ORT_ROOT }}
 
       - name: Unpack ONNX Runtime Assets
-        run: |
-          set -euxo pipefail
-          tar -xzf "${ORT_ASSET_ARCHIVE}" -C "${ORT_ROOT}"
-
-      - name: Generate pkg-config File
-        if: matrix.check == 'pkg-config'
-        run: |
-          set -euxo pipefail
-          mkdir -p "${ORT_PKGCONFIG_DIR}"
-          cat > "${ORT_PKGCONFIG_DIR}/libonnxruntime.pc" <<EOF
-          prefix=${GITHUB_WORKSPACE}/${ORT_DIR}
-          libdir=\${prefix}/lib
-          includedir=\${prefix}/include
-
-          Name: onnxruntime
-          Description: ONNX runtime
-          URL: https://github.com/microsoft/onnxruntime
-          Version: ${ORT_VERSION}
-          Libs: -L\${libdir} -lonnxruntime
-          Cflags: -I\${includedir}
-          EOF
+        run: tar -xzf "${ORT_ASSET_ARCHIVE}" -C "${ORT_ROOT}"
 
       - name: Run dynamic runtime integration tests
         if: matrix.check == 'dynamic'
-        env:
-          LD_LIBRARY_PATH: ${{ github.workspace }}/${{ env.ORT_DIR }}/lib
-          OUTLINE_TEST_ORT_DYLIB: ${{ github.workspace }}/${{ env.ORT_DIR }}/lib/libonnxruntime.so
-          ORT_DYLIB_PATH: ${{ github.workspace }}/${{ env.ORT_DIR }}/lib/libonnxruntime.so
-        run: |
-          cargo test --verbose --no-default-features --features ort-load-dynamic --lib
-          cargo test --verbose --test runtime_dynamic --test runtime_dynamic_env --no-default-features --features ort-load-dynamic -- --ignored
+        run: bash .github/scripts/run-ort-runtime-dynamic.sh
 
       - name: Run pkg-config runtime smoke tests
         if: matrix.check == 'pkg-config'
-        env:
-          LD_LIBRARY_PATH: ${{ github.workspace }}/${{ env.ORT_DIR }}/lib
-          PKG_CONFIG_PATH: ${{ github.workspace }}/${{ env.ORT_PKGCONFIG_DIR }}
-        run: |
-          cargo test --verbose --no-default-features --features ort-pkg-config --lib
+        run: bash .github/scripts/run-ort-runtime-pkg-config.sh
 
       - name: Run custom runtime env smoke tests
         if: matrix.check == 'custom-env'
-        env:
-          LD_LIBRARY_PATH: ${{ github.workspace }}/${{ env.ORT_DIR }}/lib
-          ORT_LIB_LOCATION: ${{ github.workspace }}/${{ env.ORT_DIR }}/lib
-          ORT_PREFER_DYNAMIC_LINK: "1"
-        run: |
-          cargo test --verbose --no-default-features --lib
+        run: bash .github/scripts/run-ort-runtime-custom-env.sh

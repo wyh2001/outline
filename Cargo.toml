@@ -15,7 +15,7 @@ fetch-model = ["dep:ureq", "dep:indicatif", "dep:sha2", "dep:dirs"]
 ort-download-binaries = ["ort/download-binaries", "ort/tls-native"]
 ort-load-dynamic = ["ort/load-dynamic"]
 ort-pkg-config = ["ort/pkg-config"]
-ort-copy-dylibs = ["ort/copy-dylibs"]
+ort-copy-dylibs = ["ort/copy-dylibs"] # ort's default runtime strategy.
 
 [lib]
 name = "outline"
