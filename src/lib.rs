@@ -29,16 +29,18 @@
 //! By default, `outline-core` enables the `ort-download-binaries` feature so ONNX Runtime is
 //! downloaded automatically for supported targets.
 //!
-//! If your environment needs a different runtime strategy, `outline-core` exposes it directly.
-//! These runtime strategy features are mutually exclusive; enable at most one of
-//! `ort-download-binaries`, `ort-load-dynamic`, or `ort-pkg-config`:
+//! If your environment needs a different runtime strategy, `outline-core` exposes the supported
+//! non-default paths directly. These runtime strategy features are mutually exclusive; enable at
+//! most one of `ort-download-binaries`, `ort-load-dynamic`, or `ort-pkg-config`:
 //! - `ort-pkg-config`: discover a system ONNX Runtime via `pkg-config`
 //! - `ort-load-dynamic`: load a `.dll`/`.so`/`.dylib` at runtime via the
 //!   `runtime::init_onnx_runtime_from` helper in the [`runtime`] module
 //! - [`runtime::ENV_ORT_DYLIB_PATH`]: choose the shared library used by dynamic loading
 //! - [`runtime::ENV_ORT_LIB_LOCATION`]: link against a custom ONNX Runtime build
-//! - `default-features = false`: disable the download fallback entirely when you want to require a
-//!   non-default runtime setup
+//! - [`runtime::ENV_ORT_PREFER_DYNAMIC_LINK`]: prefer shared-library linking for a custom build
+//!
+//! Setting `default-features = false` only disables the download fallback; use it together with
+//! one of the non-default setups above.
 
 #![cfg_attr(docsrs, feature(doc_cfg))]
 

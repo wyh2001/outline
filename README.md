@@ -35,9 +35,9 @@ Most users do not need this section. By default, `outline-core` enables
 targets. In some environments, the prebuilt runtime may run into
 compatibility issues.
 
-If your environment needs a different runtime strategy, use one of these supported paths:
-These runtime strategy features are mutually exclusive, so enable at most one of
-`ort-download-binaries`, `ort-load-dynamic`, or `ort-pkg-config`.
+If your environment needs a different runtime strategy, choose one of these supported
+non-default paths. These runtime strategy features are mutually exclusive, so enable at most
+one of `ort-download-binaries`, `ort-load-dynamic`, or `ort-pkg-config`.
 
 ```bash
 # Discover a system installation via pkg-config
@@ -47,14 +47,15 @@ cargo add outline-core --no-default-features --features ort-pkg-config
 cargo add outline-core --no-default-features --features ort-load-dynamic
 
 # Link against a custom ONNX Runtime build from a known directory
-ORT_LIB_LOCATION=/opt/onnxruntime/lib cargo build
-
-# Disable the download fallback entirely when you require a non-default runtime setup
 cargo add outline-core --no-default-features
+ORT_LIB_LOCATION=/opt/onnxruntime/lib cargo build
 
 # Prefer shared-library linking for a custom build
 ORT_LIB_LOCATION=/opt/onnxruntime/lib ORT_PREFER_DYNAMIC_LINK=1 cargo build
 ```
+
+`--no-default-features` only disables the download fallback. Use it together with
+`ort-load-dynamic`, `ort-pkg-config`, or a build-time `ORT_LIB_LOCATION` override.
 
 For `ort-load-dynamic`, initialize ONNX Runtime before using `Outline`, or set
 `ORT_DYLIB_PATH` before the first ORT API use:
