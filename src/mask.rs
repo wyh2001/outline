@@ -1,12 +1,17 @@
 use std::collections::VecDeque;
+use std::path::Path;
+use std::sync::Arc;
 
-use image::{GrayImage, Luma};
+use image::{GrayImage, Luma, RgbImage};
 use imageproc::contrast::{ThresholdType, threshold as ip_threshold};
 use imageproc::distance_transform::euclidean_squared_distance_transform;
 use imageproc::filter::gaussian_blur_f32;
 use ndarray::Array2;
 
+use crate::MaskVectorizer;
+use crate::OutlineResult;
 use crate::config::MaskProcessingOptions;
+use crate::foreground::{ForegroundHandle, compose_foreground};
 
 #[cfg(feature = "vectorizer-vtracer")]
 use vtracer::ColorImage;
@@ -213,6 +218,172 @@ pub fn fill_mask_holes(mask: &GrayImage, threshold: u8) -> GrayImage {
     }
 
     out
+}
+
+/// Processed mask image with optional further refinement and output generation.
+///
+/// Represents a concrete mask image (typically binary after thresholding) produced by executing
+/// operations from a [`crate::MatteHandle`].
+///
+/// # Example
+/// ```no_run
+/// use outline::Outline;
+///
+/// let outline = Outline::new("model.onnx");
+/// let session = outline.for_image("input.jpg")?;
+/// let mask = session.matte().blur().threshold().processed()?;
+///
+/// // Generate multiple outputs from the mask
+/// mask.save("mask.png")?;
+/// mask.foreground()?.save("subject.png")?;
+/// # Ok::<_, outline::OutlineError>(())
+/// ```
+///
+/// To trace the mask into SVG, pass a [`MaskVectorizer`] implementation to [`MaskHandle::trace`].
+/// The crate re-exports `VtracerSvgVectorizer` when the `vectorizer-vtracer` feature is enabled.
+#[derive(Debug, Clone)]
+pub struct MaskHandle {
+    rgb_image: Arc<RgbImage>,
+    mask: GrayImage,
+    default_mask_processing: MaskProcessingOptions,
+    operations: Vec<MaskOperation>,
+}
+
+impl MaskHandle {
+    pub(crate) fn new(
+        rgb_image: Arc<RgbImage>,
+        mask: GrayImage,
+        default_mask_processing: MaskProcessingOptions,
+    ) -> Self {
+        Self {
+            rgb_image,
+            mask,
+            default_mask_processing,
+            operations: Vec::new(),
+        }
+    }
+
+    /// Get the raw  mask.
+    pub fn raw(&self) -> GrayImage {
+        self.mask.clone()
+    }
+
+    /// Get a reference to the mask.
+    pub fn image(&self) -> &GrayImage {
+        &self.mask
+    }
+
+    /// Consume the handle and return the mask.
+    pub fn into_image(self) -> GrayImage {
+        self.mask
+    }
+
+    /// Save the mask to the specified path.
+    pub fn save(&self, path: impl AsRef<Path>) -> OutlineResult<()> {
+        self.mask.save(path)?;
+        Ok(())
+    }
+
+    /// Add a blur operation using the default sigma.
+    pub fn blur(mut self) -> Self {
+        let sigma = self.default_mask_processing.blur_sigma;
+        self.operations.push(MaskOperation::Blur { sigma });
+        self
+    }
+
+    /// Add a blur operation with a custom sigma.
+    pub fn blur_with(mut self, sigma: f32) -> Self {
+        self.operations.push(MaskOperation::Blur { sigma });
+        self
+    }
+
+    /// Add a threshold operation using the default mask threshold.
+    pub fn threshold(mut self) -> Self {
+        let value = self.default_mask_processing.mask_threshold;
+        self.operations.push(MaskOperation::Threshold { value });
+        self
+    }
+
+    /// Add a threshold operation with a custom value.
+    pub fn threshold_with(mut self, value: u8) -> Self {
+        self.operations.push(MaskOperation::Threshold { value });
+        self
+    }
+
+    /// Add a dilation operation using the default radius.
+    ///
+    /// **Note**: Dilation typically works best on binary masks. If this mask is still grayscale,
+    /// consider calling [`threshold`](MaskHandle::threshold) first.
+    pub fn dilate(mut self) -> Self {
+        let radius = self.default_mask_processing.dilation_radius;
+        self.operations.push(MaskOperation::Dilate { radius });
+        self
+    }
+
+    /// Add a dilation operation with a custom radius.
+    ///
+    /// **Note**: Dilation typically works best on binary masks. If this mask is still grayscale,
+    /// consider calling [`threshold`](MaskHandle::threshold) first.
+    pub fn dilate_with(mut self, radius: f32) -> Self {
+        self.operations.push(MaskOperation::Dilate { radius });
+        self
+    }
+
+    /// Add a hole-filling operation to the processing pipeline.
+    ///
+    /// **Note**: Hole-filling typically works best on binary masks. If this mask is still grayscale,
+    /// consider calling [`threshold`](MaskHandle::threshold) first.
+    pub fn fill_holes(mut self) -> Self {
+        let threshold = self.default_mask_processing.mask_threshold;
+        self.operations.push(MaskOperation::FillHoles { threshold });
+        self
+    }
+
+    /// Process the mask with the accumulated operations and default options.
+    pub fn processed(self) -> OutlineResult<MaskHandle> {
+        self.process_with_options(None)
+    }
+
+    /// Process the mask with the accumulated operations and custom options.
+    pub fn processed_with(self, options: &MaskProcessingOptions) -> OutlineResult<MaskHandle> {
+        self.process_with_options(Some(options))
+    }
+
+    /// Helper function to process with options.
+    fn process_with_options(
+        mut self,
+        options: Option<&MaskProcessingOptions>,
+    ) -> OutlineResult<MaskHandle> {
+        let mut ops = std::mem::take(&mut self.operations);
+        match options {
+            Some(custom) => ops.extend(operations_from_options(custom)),
+            None if ops.is_empty() => {
+                ops.extend(operations_from_options(&self.default_mask_processing))
+            }
+            None => {}
+        }
+
+        let mask = apply_operations(&self.mask, &ops);
+        Ok(MaskHandle::new(
+            self.rgb_image,
+            mask,
+            self.default_mask_processing,
+        ))
+    }
+
+    /// Compose the RGBA foreground image from the RGB image and the current mask.
+    pub fn foreground(&self) -> OutlineResult<ForegroundHandle> {
+        let rgba = compose_foreground(self.rgb_image.as_ref(), &self.mask)?;
+        Ok(ForegroundHandle::new(rgba))
+    }
+
+    /// Trace the current mask using the specified vectorizer and options.
+    pub fn trace<V>(&self, vectorizer: &V, options: &V::Options) -> OutlineResult<V::Output>
+    where
+        V: MaskVectorizer,
+    {
+        vectorizer.vectorize(&self.mask, options)
+    }
 }
 
 #[cfg(test)]

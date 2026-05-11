@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use image::{GrayImage, RgbImage, Rgba, RgbaImage};
 
 use crate::{OutlineError, OutlineResult};
@@ -18,6 +20,58 @@ pub fn compose_foreground(rgb: &RgbImage, alpha: &GrayImage) -> OutlineResult<Rg
     }
 
     Ok(rgba)
+}
+
+/// Composed RGBA foreground image with transparent background.
+///
+/// Final output produced by composing the original RGB image with a mask as the alpha channel.
+/// The mask's grayscale values map to alpha, producing smooth or hard edges depending on processing.
+/// Obtain by calling [`foreground`](MatteHandle::foreground) on a [`MatteHandle`] or [`MaskHandle`].
+///
+/// # Example
+/// ```no_run
+/// use outline::Outline;
+///
+/// let outline = Outline::new("model.onnx");
+/// let session = outline.for_image("input.jpg")?;
+///
+/// // Soft edges from raw matte
+/// let soft = session.matte().foreground()?;
+/// soft.save("soft-cutout.png")?;
+///
+/// // Hard edges from processed mask
+/// let hard = session.matte()
+///     .blur()
+///     .threshold()
+///     .processed()?
+///     .foreground()?;
+/// hard.save("hard-cutout.png")?;
+/// # Ok::<_, outline::OutlineError>(())
+/// ```
+pub struct ForegroundHandle {
+    image: RgbaImage,
+}
+
+impl ForegroundHandle {
+    pub(crate) fn new(image: RgbaImage) -> Self {
+        Self { image }
+    }
+
+    /// Get a reference to the RGBA foreground image.
+    pub fn image(&self) -> &RgbaImage {
+        &self.image
+    }
+
+    /// Consume the handle and return the RGBA foreground image.
+    pub fn into_image(self) -> RgbaImage {
+        self.image
+    }
+
+    /// Save the RGBA foreground image to the specified path.
+    pub fn save(&self, path: impl AsRef<Path>) -> OutlineResult<()> {
+        self.image.save(path)?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
