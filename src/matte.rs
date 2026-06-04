@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -106,11 +107,11 @@ pub struct MatteHandle {
 }
 
 impl MatteHandle {
-    fn resolved_matte(&self) -> GrayImage {
+    fn resolved_matte(&self) -> Cow<'_, GrayImage> {
         if self.operations.is_empty() {
-            (*self.raw_matte).clone()
+            Cow::Borrowed(self.raw_matte.as_ref())
         } else {
-            apply_operations(self.raw_matte.as_ref(), &self.operations)
+            Cow::Owned(apply_operations(self.raw_matte.as_ref(), &self.operations))
         }
     }
 
@@ -136,7 +137,11 @@ impl MatteHandle {
 
     /// Consume the handle and return the current matte as a grayscale image.
     pub fn into_image(self) -> GrayImage {
-        self.resolved_matte()
+        if self.operations.is_empty() {
+            Arc::unwrap_or_clone(self.raw_matte)
+        } else {
+            apply_operations(self.raw_matte.as_ref(), &self.operations)
+        }
     }
 
     /// Save the current matte to the specified path.

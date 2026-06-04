@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::VecDeque;
 use std::path::Path;
 use std::sync::Arc;
@@ -429,11 +430,11 @@ impl MaskHandle {
         Self::new(self.rgb_image, mask, self.default_mask_processing)
     }
 
-    fn resolved_mask(&self) -> GrayImage {
+    fn resolved_mask(&self) -> Cow<'_, GrayImage> {
         if self.operations.is_empty() {
-            self.mask.clone()
+            Cow::Borrowed(&self.mask)
         } else {
-            apply_operations(&self.mask, &self.operations)
+            Cow::Owned(apply_operations(&self.mask, &self.operations))
         }
     }
 
