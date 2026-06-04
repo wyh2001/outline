@@ -87,8 +87,10 @@ pub use vectorizer::vtracer::{TraceOptions, VtracerSvgVectorizer, trace_to_svg_s
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use crate::inference::CachedInferenceSession;
 use image::imageops::FilterType;
+use image::{DynamicImage, RgbImage, RgbaImage};
+
+use crate::inference::{CachedInferenceSession, load_rgb_from_memory_with_orientation};
 
 /// Entry point for configuring and running background matting inference.
 ///
@@ -206,6 +208,38 @@ impl Outline {
             matte,
             self.default_mask_processing.clone(),
         ))
+    }
+
+    /// Run the inference pipeline for an in-memory RGB image.
+    pub fn for_rgb_image(&self, rgb_image: RgbImage) -> OutlineResult<InferencedMatte> {
+        let session = self.get_or_init_cached_session()?;
+        let (rgb, matte) = session.run_matte_pipeline_on_rgb(&self.settings, rgb_image)?;
+        Ok(InferencedMatte::new(
+            rgb,
+            matte,
+            self.default_mask_processing.clone(),
+        ))
+    }
+
+    /// Run the inference pipeline for an in-memory RGBA image.
+    ///
+    /// The alpha channel is discarded before inference.
+    pub fn for_rgba_image(&self, rgba_image: RgbaImage) -> OutlineResult<InferencedMatte> {
+        self.for_dynamic_image(DynamicImage::ImageRgba8(rgba_image))
+    }
+
+    /// Run the inference pipeline for an in-memory image decoded by the `image` crate.
+    pub fn for_dynamic_image(&self, image: DynamicImage) -> OutlineResult<InferencedMatte> {
+        self.for_rgb_image(image.into_rgb8())
+    }
+
+    /// Run the inference pipeline for encoded image bytes in memory.
+    ///
+    /// This mirrors [`for_image`](Outline::for_image) by decoding with the `image` crate and
+    /// applying EXIF orientation metadata when present.
+    pub fn for_image_bytes(&self, bytes: &[u8]) -> OutlineResult<InferencedMatte> {
+        let rgb = load_rgb_from_memory_with_orientation(bytes)?;
+        self.for_rgb_image(rgb)
     }
 }
 

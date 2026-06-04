@@ -1,5 +1,6 @@
 use std::convert::TryFrom;
 use std::io;
+use std::io::Cursor;
 use std::path::Path;
 use std::sync::Mutex;
 
@@ -70,6 +71,15 @@ impl CachedInferenceSession {
         image_path: &Path,
     ) -> OutlineResult<(RgbImage, GrayImage)> {
         let rgb_input = load_rgb_with_orientation(image_path)?;
+        self.run_matte_pipeline_on_rgb(settings, rgb_input)
+    }
+
+    /// Run the full matte inference pipeline using an in-memory RGB image.
+    pub fn run_matte_pipeline_on_rgb(
+        &self,
+        settings: &InferenceSettings,
+        rgb_input: RgbImage,
+    ) -> OutlineResult<(RgbImage, GrayImage)> {
         let orig_w = rgb_input.width();
         let orig_h = rgb_input.height();
 
@@ -163,6 +173,18 @@ fn positive_dim_to_usize(dim: i64) -> Option<usize> {
 /// Load an RGB image from the given path, applying orientation from EXIF data.
 fn load_rgb_with_orientation(path: &Path) -> OutlineResult<RgbImage> {
     let mut decoder = ImageReader::open(path)?.into_decoder()?;
+    let orientation = decoder.orientation()?;
+    let mut image = DynamicImage::from_decoder(decoder)?;
+    image.apply_orientation(orientation);
+    Ok(image.into_rgb8())
+}
+
+/// Decode an RGB image from encoded bytes, applying orientation from EXIF data when present.
+pub(crate) fn load_rgb_from_memory_with_orientation(bytes: &[u8]) -> OutlineResult<RgbImage> {
+    let cursor = Cursor::new(bytes);
+    let mut decoder = ImageReader::new(cursor)
+        .with_guessed_format()?
+        .into_decoder()?;
     let orientation = decoder.orientation()?;
     let mut image = DynamicImage::from_decoder(decoder)?;
     image.apply_orientation(orientation);
@@ -271,4 +293,40 @@ pub fn resize_matte(
         out[[y as usize, x as usize]] = pixel[0];
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use image::{ImageFormat, Rgb, RgbImage, Rgba, RgbaImage};
+
+    #[test]
+    fn load_rgb_from_memory_decodes_png() {
+        let rgb = RgbImage::from_pixel(3, 2, Rgb([12, 34, 56]));
+        let image = DynamicImage::ImageRgb8(rgb);
+        let mut encoded = Cursor::new(Vec::new());
+        image
+            .write_to(&mut encoded, ImageFormat::Png)
+            .expect("png encoding should succeed");
+
+        let decoded = load_rgb_from_memory_with_orientation(encoded.get_ref())
+            .expect("memory decode should succeed");
+        assert_eq!(decoded.dimensions(), (3, 2));
+        assert_eq!(decoded.get_pixel(0, 0).0, [12, 34, 56]);
+    }
+
+    #[test]
+    fn load_rgb_from_memory_discards_alpha() {
+        let rgba = RgbaImage::from_pixel(4, 1, Rgba([10, 20, 30, 40]));
+        let image = DynamicImage::ImageRgba8(rgba);
+        let mut encoded = Cursor::new(Vec::new());
+        image
+            .write_to(&mut encoded, ImageFormat::Png)
+            .expect("png encoding should succeed");
+
+        let decoded = load_rgb_from_memory_with_orientation(encoded.get_ref())
+            .expect("memory decode should succeed");
+        assert_eq!(decoded.dimensions(), (4, 1));
+        assert_eq!(decoded.get_pixel(0, 0).0, [10, 20, 30]);
+    }
 }
