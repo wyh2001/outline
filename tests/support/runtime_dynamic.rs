@@ -1,20 +1,12 @@
 use std::env;
-use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
 use ort::session::Session;
 use ort::value::Tensor;
-use tempfile::TempDir;
 
 // CI injects a real shared library path; local runs must set it explicitly.
 pub const ENV_TEST_ORT_DYLIB: &str = "OUTLINE_TEST_ORT_DYLIB";
-
-// Embed a small model file so the test does not depend on external model files.
-const IDENTITY_ORT: &[u8] = include_bytes!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/tests/fixtures/identity.ort"
-));
 
 pub fn shared_library_from_env(var: &str) -> io::Result<PathBuf> {
     let path = env::var_os(var).ok_or_else(|| {
@@ -29,27 +21,20 @@ pub fn runtime_dylib_from_env() -> io::Result<PathBuf> {
     shared_library_from_env(ENV_TEST_ORT_DYLIB)
 }
 
-pub fn write_identity_model() -> io::Result<(TempDir, PathBuf)> {
-    let temp_dir = tempfile::tempdir()?;
-    let model_path = temp_dir.path().join("identity.ort");
-    fs::write(&model_path, IDENTITY_ORT)?;
-    Ok((temp_dir, model_path))
-}
-
-pub fn assert_identity_model_runs(model_path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+pub fn assert_tiny_matte_model_runs(model_path: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let mut session = Session::builder()?.commit_from_file(model_path)?;
     assert_eq!(session.inputs().len(), 1);
     assert_eq!(session.outputs().len(), 1);
 
-    let input_tensor = Tensor::from_array(([3usize], vec![true, false, true]))?;
+    let input_tensor = Tensor::from_array(([1usize, 3, 2, 2], vec![0.0f32; 12]))?;
     let outputs = session.run(ort::inputs![input_tensor])?;
     let output = outputs[0]
-        .try_extract_array::<bool>()?
+        .try_extract_array::<f32>()?
         .iter()
         .copied()
         .collect::<Vec<_>>();
 
-    assert_eq!(output, vec![true, false, true]);
+    assert_eq!(output, vec![0.0, 0.25, 0.5, 1.0]);
     Ok(())
 }
 

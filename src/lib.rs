@@ -244,29 +244,16 @@ impl Outline {
 }
 
 #[cfg(test)]
+#[path = "../tests/support/tiny_onnx.rs"]
+mod tiny_onnx;
+
+#[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
     use std::sync::Mutex;
-    use tempfile::NamedTempFile;
 
     // Serialize env-var tests so they don't race each other.
     static ENV_LOCK: Mutex<()> = Mutex::new(());
-
-    // Embed the tiny ORT-format identity model into test binaries so tests remain self-contained.
-    const ORT_IDENTITY_MODEL_BYTES: &[u8] = include_bytes!("../tests/fixtures/identity.ort");
-
-    fn ort_identity_model_file() -> NamedTempFile {
-        let mut file = tempfile::Builder::new()
-            .suffix(".ort")
-            .tempfile()
-            .expect("failed to create temporary identity model");
-        file.write_all(ORT_IDENTITY_MODEL_BYTES)
-            .expect("failed to write temporary identity model");
-        file.flush()
-            .expect("failed to flush temporary identity model");
-        file
-    }
 
     mod outline_new {
         use super::*;
@@ -346,7 +333,7 @@ mod tests {
 
         #[test]
         fn session_is_reused_within_same_outline() {
-            let model = ort_identity_model_file();
+            let model = tiny_onnx::tiny_matte_model_file();
             let outline = Outline::new(model.path());
 
             let first = outline
@@ -361,7 +348,7 @@ mod tests {
 
         #[test]
         fn clone_starts_with_fresh_session_cache() {
-            let model = ort_identity_model_file();
+            let model = tiny_onnx::tiny_matte_model_file();
             let outline = Outline::new(model.path());
             let original = outline
                 .get_or_init_cached_session()
@@ -377,7 +364,7 @@ mod tests {
 
         #[test]
         fn non_session_settings_keep_cached_session() {
-            let model = ort_identity_model_file();
+            let model = tiny_onnx::tiny_matte_model_file();
             let outline = Outline::new(model.path());
             let cached = outline
                 .get_or_init_cached_session()
@@ -393,7 +380,7 @@ mod tests {
 
         #[test]
         fn intra_threads_change_clears_cached_session() {
-            let model = ort_identity_model_file();
+            let model = tiny_onnx::tiny_matte_model_file();
             let outline = Outline::new(model.path());
             let cached = outline
                 .get_or_init_cached_session()
