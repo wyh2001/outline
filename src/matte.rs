@@ -1,11 +1,13 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use image::{GrayImage, RgbImage};
+use image::{GrayImage, RgbImage, RgbaImage};
 
 use crate::config::{ErosionBorderMode, MaskProcessingOptions};
 use crate::foreground::{ForegroundHandle, compose_foreground};
-use crate::mask::{MaskHandle, MaskOperation, apply_operations, operations_from_options};
+use crate::mask::{
+    MaskColor, MaskHandle, MaskOperation, apply_operations, colorize_mask, operations_from_options,
+};
 use crate::{MaskVectorizer, OutlineResult};
 
 /// Inference result containing the original RGB image and raw matte prediction.
@@ -246,6 +248,11 @@ impl MatteHandle {
     pub fn foreground(&self) -> OutlineResult<ForegroundHandle> {
         let rgba = compose_foreground(self.rgb_image.as_ref(), self.raw_matte.as_ref())?;
         Ok(ForegroundHandle::new(rgba))
+    }
+
+    /// Colorize the raw matte into a flat-color RGBA image using the provided options.
+    pub fn colorize(&self, color: impl Into<MaskColor>) -> RgbaImage {
+        colorize_mask(self.raw_matte.as_ref(), color)
     }
 
     /// Trace the raw matte using the specified vectorizer and options.

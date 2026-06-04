@@ -71,7 +71,7 @@ pub use crate::error::{OutlineError, OutlineResult};
 #[doc(inline)]
 pub use crate::foreground::ForegroundHandle;
 #[doc(inline)]
-pub use crate::mask::MaskHandle;
+pub use crate::mask::{MaskAlphaMode, MaskColor, MaskHandle, colorize_mask};
 #[doc(inline)]
 pub use crate::matte::{InferencedMatte, MatteHandle};
 pub use vectorizer::MaskVectorizer;

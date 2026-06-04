@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 use std::path::Path;
 use std::sync::Arc;
 
-use image::{GrayImage, Luma, RgbImage};
+use image::{GrayImage, Luma, RgbImage, Rgba, RgbaImage};
 use imageproc::contrast::{ThresholdType, threshold as ip_threshold};
 use imageproc::distance_transform::euclidean_squared_distance_transform;
 use imageproc::filter::gaussian_blur_f32;
@@ -290,6 +290,91 @@ pub fn fill_mask_holes(mask: &GrayImage, threshold: u8) -> GrayImage {
     out
 }
 
+/// How mask values are converted into output alpha.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub enum MaskAlphaMode {
+    /// Use the mask value directly as alpha.
+    #[default]
+    UseMask,
+    /// Scale the mask alpha by a factor.
+    Scale(f32),
+    /// Treat any non-zero mask value as a solid alpha.
+    Solid(u8),
+}
+
+/// Options for colorizing a mask into an RGBA image.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MaskColor {
+    /// Flat RGBA color applied to mask-covered pixels; A acts as a global opacity multiplier.
+    pub color: [u8; 4],
+    /// How mask values influence the output alpha.
+    pub alpha_mode: MaskAlphaMode,
+}
+
+impl MaskColor {
+    /// Create a flat-color mask colorization that uses the mask as-is for alpha.
+    pub fn new(color: [u8; 4]) -> Self {
+        Self {
+            color,
+            alpha_mode: MaskAlphaMode::UseMask,
+        }
+    }
+
+    /// Override the alpha mode while keeping the color.
+    pub fn with_alpha_mode(mut self, alpha_mode: MaskAlphaMode) -> Self {
+        self.alpha_mode = alpha_mode;
+        self
+    }
+}
+
+impl Default for MaskColor {
+    fn default() -> Self {
+        Self::new([255, 255, 255, 255])
+    }
+}
+
+impl From<[u8; 4]> for MaskColor {
+    fn from(color: [u8; 4]) -> Self {
+        Self::new(color)
+    }
+}
+
+fn resolve_mask_alpha(mask_value: u8, mode: MaskAlphaMode) -> u8 {
+    match mode {
+        MaskAlphaMode::UseMask => mask_value,
+        MaskAlphaMode::Scale(scale) => {
+            let scaled = (mask_value as f32) * scale.max(0.0);
+            scaled.round().clamp(0.0, 255.0) as u8
+        }
+        MaskAlphaMode::Solid(alpha) => {
+            if mask_value > 0 {
+                alpha
+            } else {
+                0
+            }
+        }
+    }
+}
+
+/// Convert a grayscale mask into a flat-color RGBA image.
+///
+/// The final alpha is the mask-derived alpha, as controlled by [`MaskAlphaMode`],
+/// multiplied by `color[3]`.
+pub fn colorize_mask(mask: &GrayImage, color: impl Into<MaskColor>) -> RgbaImage {
+    let color = color.into();
+    let (w, h) = mask.dimensions();
+    let [r, g, b, base_alpha] = color.color;
+
+    let mut out = RgbaImage::new(w, h);
+    for (mask_px, out_px) in mask.pixels().zip(out.pixels_mut()) {
+        let mask_alpha = resolve_mask_alpha(mask_px[0], color.alpha_mode);
+        let alpha = ((mask_alpha as u16 * base_alpha as u16) / 255) as u8;
+        *out_px = Rgba([r, g, b, alpha]);
+    }
+
+    out
+}
+
 /// Processed mask image with optional further refinement and output generation.
 ///
 /// Represents a concrete mask image (typically binary after thresholding) produced by executing
@@ -484,6 +569,11 @@ impl MaskHandle {
     pub fn foreground(&self) -> OutlineResult<ForegroundHandle> {
         let rgba = compose_foreground(self.rgb_image.as_ref(), &self.mask)?;
         Ok(ForegroundHandle::new(rgba))
+    }
+
+    /// Convert the current mask into a flat-color RGBA image.
+    pub fn colorize(&self, color: impl Into<MaskColor>) -> RgbaImage {
+        colorize_mask(&self.mask, color)
     }
 
     /// Trace the current mask using the specified vectorizer and options.
@@ -1358,6 +1448,57 @@ mod tests {
                 mask: GrayImage::from_pixel(1, 1, Luma([255])),
                 default_mask_processing: MaskProcessingOptions::default(),
                 operations: Vec::new(),
+            }
+        }
+
+        mod colorize {
+            use super::*;
+
+            #[test]
+            fn default_color_is_white_with_mask_alpha() {
+                let color = MaskColor::default();
+                assert_eq!(color.color, [255, 255, 255, 255]);
+                assert!(matches!(color.alpha_mode, MaskAlphaMode::UseMask));
+            }
+
+            #[test]
+            fn use_mask_mode_sets_alpha_from_mask() {
+                let mask = gray_image(2, 2, 128);
+                let result = colorize_mask(&mask, MaskColor::new([0, 180, 255, 255]));
+
+                for px in result.pixels() {
+                    assert_eq!(px.0, [0, 180, 255, 128]);
+                }
+            }
+
+            #[test]
+            fn base_alpha_is_multiplied_with_mask_alpha() {
+                let mask = gray_image(1, 1, 128);
+                let result = colorize_mask(&mask, MaskColor::new([255, 255, 255, 128]));
+
+                assert_eq!(result.get_pixel(0, 0).0, [255, 255, 255, 64]);
+            }
+
+            #[test]
+            fn scale_mode_scales_mask_alpha() {
+                let mask = gray_image(1, 1, 200);
+                let color =
+                    MaskColor::new([255, 0, 0, 255]).with_alpha_mode(MaskAlphaMode::Scale(0.5));
+                let result = colorize_mask(&mask, color);
+
+                assert_eq!(result.get_pixel(0, 0).0, [255, 0, 0, 100]);
+            }
+
+            #[test]
+            fn solid_mode_uses_alpha_for_nonzero_mask() {
+                let mask =
+                    GrayImage::from_fn(2, 1, |x, _| if x == 0 { Luma([0]) } else { Luma([25]) });
+                let color =
+                    MaskColor::new([0, 255, 0, 255]).with_alpha_mode(MaskAlphaMode::Solid(200));
+                let result = colorize_mask(&mask, color);
+
+                assert_eq!(result.get_pixel(0, 0).0, [0, 255, 0, 0]);
+                assert_eq!(result.get_pixel(1, 0).0, [0, 255, 0, 200]);
             }
         }
 
