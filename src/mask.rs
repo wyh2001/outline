@@ -12,6 +12,10 @@ use crate::MaskVectorizer;
 use crate::OutlineResult;
 use crate::config::{ErosionBorderMode, MaskProcessingOptions};
 use crate::foreground::{ForegroundHandle, compose_foreground};
+use crate::geometry::{
+    BoundingBox, Padding, crop_gray_image, crop_rgb_image, mask_bounding_box, pad_gray_image,
+    pad_rgb_image,
+};
 
 #[cfg(feature = "vectorizer-vtracer")]
 use vtracer::ColorImage;
@@ -176,21 +180,18 @@ pub fn erode_euclidean_with_border_mode(
     match border_mode {
         ErosionBorderMode::OutsideIsUnknown => invert_mask(&dilate_euclidean(&inverted, r)),
         ErosionBorderMode::OutsideIsBackground => {
-            let (w, h) = mask_bin.dimensions();
-            let padded_width = w
-                .checked_add(2)
-                .expect("padded mask width exceeds u32::MAX");
-            let padded_height = h
-                .checked_add(2)
-                .expect("padded mask height exceeds u32::MAX");
-            let mut padded = GrayImage::from_pixel(padded_width, padded_height, Luma([255]));
-            for y in 0..h {
-                for x in 0..w {
-                    padded.put_pixel(x + 1, y + 1, *inverted.get_pixel(x, y));
-                }
-            }
+            let padding = Padding::uniform(1);
+            let padded = pad_gray_image(&inverted, padding, 255);
             let dilated = dilate_euclidean(&padded, r);
-            let cropped = GrayImage::from_fn(w, h, |x, y| *dilated.get_pixel(x + 1, y + 1));
+            let cropped = crop_gray_image(
+                &dilated,
+                BoundingBox::new(
+                    padding.left,
+                    padding.top,
+                    mask_bin.width(),
+                    mask_bin.height(),
+                ),
+            );
             invert_mask(&cropped)
         }
     }
@@ -418,6 +419,24 @@ impl MaskHandle {
         }
     }
 
+    fn resolve_pending_operations(mut self) -> Self {
+        if self.operations.is_empty() {
+            return self;
+        }
+
+        let operations = std::mem::take(&mut self.operations);
+        let mask = apply_operations(&self.mask, &operations);
+        Self::new(self.rgb_image, mask, self.default_mask_processing)
+    }
+
+    fn resolved_mask(&self) -> GrayImage {
+        if self.operations.is_empty() {
+            self.mask.clone()
+        } else {
+            apply_operations(&self.mask, &self.operations)
+        }
+    }
+
     /// Get the raw  mask.
     pub fn raw(&self) -> GrayImage {
         self.mask.clone()
@@ -437,6 +456,17 @@ impl MaskHandle {
     pub fn save(&self, path: impl AsRef<Path>) -> OutlineResult<()> {
         self.mask.save(path)?;
         Ok(())
+    }
+
+    /// Compute the bounding box of the current mask using a non-zero threshold.
+    pub fn bounding_box(&self) -> Option<BoundingBox> {
+        self.bounding_box_with(1)
+    }
+
+    /// Compute the bounding box of the current mask at or above `threshold`.
+    pub fn bounding_box_with(&self, threshold: u8) -> Option<BoundingBox> {
+        let mask = self.resolved_mask();
+        mask_bounding_box(&mask, threshold)
     }
 
     /// Add a blur operation using the default sigma.
@@ -543,7 +573,6 @@ impl MaskHandle {
         self.process_with_options(Some(options))
     }
 
-    /// Helper function to process with options.
     fn process_with_options(
         mut self,
         options: Option<&MaskProcessingOptions>,
@@ -571,7 +600,7 @@ impl MaskHandle {
         Ok(ForegroundHandle::new(rgba))
     }
 
-    /// Convert the current mask into a flat-color RGBA image.
+    /// Colorize this mask into a flat-color RGBA image using the provided options.
     pub fn colorize(&self, color: impl Into<MaskColor>) -> RgbaImage {
         colorize_mask(&self.mask, color)
     }
@@ -582,6 +611,43 @@ impl MaskHandle {
         V: MaskVectorizer,
     {
         vectorizer.vectorize(&self.mask, options)
+    }
+
+    /// Expand the mask canvas by the given padding while keeping content at the same offset.
+    ///
+    /// Any pending mask operations are applied before padding so method call order is preserved.
+    /// The underlying RGB canvas is padded with black to keep [`foreground`](MaskHandle::foreground)
+    /// aligned with the mask.
+    pub fn pad(self, padding: impl Into<Padding>) -> Self {
+        let this = self.resolve_pending_operations();
+        let padding = padding.into();
+        let mask = pad_gray_image(&this.mask, padding, 0);
+        let rgb = Arc::new(pad_rgb_image(this.rgb_image.as_ref(), padding, [0, 0, 0]));
+        Self::new(rgb, mask, this.default_mask_processing)
+    }
+
+    /// Crop the mask and source RGB image to the smallest non-zero content box plus `margin`.
+    ///
+    /// Returns `None` when the current mask has no non-zero pixels.
+    pub fn crop_to_content(self, margin: impl Into<Padding>) -> Option<Self> {
+        self.crop_to_content_with(1, margin)
+    }
+
+    /// Crop the mask and source RGB image to the smallest content box at or above `threshold`,
+    /// plus `margin`.
+    ///
+    /// Returns `None` when the current mask has no pixels at or above `threshold`.
+    pub fn crop_to_content_with(self, threshold: u8, margin: impl Into<Padding>) -> Option<Self> {
+        let this = self.resolve_pending_operations();
+        let margin = margin.into();
+        let bounds = mask_bounding_box(&this.mask, threshold)?.expanded_to_fit(
+            margin,
+            this.mask.width(),
+            this.mask.height(),
+        );
+        let mask = crop_gray_image(&this.mask, bounds);
+        let rgb = Arc::new(crop_rgb_image(this.rgb_image.as_ref(), bounds));
+        Some(Self::new(rgb, mask, this.default_mask_processing))
     }
 }
 
@@ -1360,6 +1426,7 @@ mod tests {
                     blur: false,
                     binary: false,
                     dilate: false,
+                    erode: false,
                     fill_holes: false,
                     ..Default::default()
                 };
@@ -1424,6 +1491,7 @@ mod tests {
                     binary: true,
                     mask_threshold: 100,
                     dilate: false,
+                    erode: false,
                     fill_holes: true,
                     ..Default::default()
                 };
@@ -1446,6 +1514,15 @@ mod tests {
             MaskHandle {
                 rgb_image: Arc::new(RgbImage::from_pixel(1, 1, Rgb([255, 255, 255]))),
                 mask: GrayImage::from_pixel(1, 1, Luma([255])),
+                default_mask_processing: MaskProcessingOptions::default(),
+                operations: Vec::new(),
+            }
+        }
+
+        fn mask_handle_with_images(rgb: RgbImage, mask: GrayImage) -> MaskHandle {
+            MaskHandle {
+                rgb_image: Arc::new(rgb),
+                mask,
                 default_mask_processing: MaskProcessingOptions::default(),
                 operations: Vec::new(),
             }
@@ -1510,10 +1587,7 @@ mod tests {
                 let handle = mask_handle().erode();
                 assert!(matches!(
                     handle.operations.as_slice(),
-                    [MaskOperation::Erode {
-                        radius,
-                        border_mode
-                    }]
+                    [MaskOperation::Erode { radius, border_mode }]
                         if (*radius - MaskProcessingOptions::default().erosion_radius).abs() < f32::EPSILON
                             && *border_mode == MaskProcessingOptions::default().erosion_border_mode
                 ));
@@ -1524,10 +1598,7 @@ mod tests {
                 let handle = mask_handle().erode_with(3.0);
                 assert!(matches!(
                     handle.operations.as_slice(),
-                    [MaskOperation::Erode {
-                        radius,
-                        border_mode
-                    }]
+                    [MaskOperation::Erode { radius, border_mode }]
                         if (*radius - 3.0).abs() < f32::EPSILON
                             && *border_mode == MaskProcessingOptions::default().erosion_border_mode
                 ));
@@ -1539,13 +1610,47 @@ mod tests {
                     mask_handle().erode_with_border_mode(3.0, ErosionBorderMode::OutsideIsUnknown);
                 assert!(matches!(
                     handle.operations.as_slice(),
-                    [MaskOperation::Erode {
-                        radius,
-                        border_mode
-                    }]
+                    [MaskOperation::Erode { radius, border_mode }]
                         if (*radius - 3.0).abs() < f32::EPSILON
                             && *border_mode == ErosionBorderMode::OutsideIsUnknown
                 ));
+            }
+        }
+
+        mod geometry {
+            use super::*;
+
+            #[test]
+            fn mask_handle_pad_updates_mask_and_foreground_canvas() {
+                let rgb = RgbImage::from_pixel(2, 2, Rgb([10, 20, 30]));
+                let mut mask = GrayImage::from_pixel(2, 2, Luma([0]));
+                mask.put_pixel(1, 1, Luma([255]));
+
+                let padded = mask_handle_with_images(rgb, mask).pad(Padding::new(1, 2, 3, 4));
+
+                assert_eq!(padded.image().dimensions(), (6, 8));
+                let foreground = padded.foreground().expect("foreground should compose");
+                assert_eq!(foreground.image().dimensions(), (6, 8));
+                assert_eq!(foreground.image().get_pixel(2, 3)[3], 255);
+            }
+
+            #[test]
+            fn mask_handle_crop_to_content_crops_mask_and_rgb_together() {
+                let rgb = RgbImage::from_fn(4, 4, |x, y| Rgb([x as u8, y as u8, 0]));
+                let mut mask = GrayImage::from_pixel(4, 4, Luma([0]));
+                mask.put_pixel(2, 1, Luma([255]));
+                mask.put_pixel(2, 2, Luma([255]));
+
+                let cropped = mask_handle_with_images(rgb, mask)
+                    .crop_to_content(1)
+                    .expect("mask has content");
+
+                assert_eq!(cropped.image().dimensions(), (3, 4));
+                let foreground = cropped.foreground().expect("foreground should compose");
+                assert_eq!(foreground.image().dimensions(), (3, 4));
+                assert_eq!(foreground.image().get_pixel(1, 1)[0], 2);
+                assert_eq!(foreground.image().get_pixel(1, 1)[1], 1);
+                assert_eq!(foreground.image().get_pixel(1, 1)[3], 255);
             }
         }
     }

@@ -2,6 +2,7 @@ use std::path::Path;
 
 use image::{GrayImage, RgbImage, Rgba, RgbaImage};
 
+use crate::geometry::{BoundingBox, Padding, alpha_bounding_box, crop_rgba_image, pad_rgba_image};
 use crate::{OutlineError, OutlineResult};
 
 /// Compose an RGBA foreground image from an RGB image and a grayscale alpha matte.
@@ -26,7 +27,8 @@ pub fn compose_foreground(rgb: &RgbImage, alpha: &GrayImage) -> OutlineResult<Rg
 ///
 /// Final output produced by composing the original RGB image with a mask as the alpha channel.
 /// The mask's grayscale values map to alpha, producing smooth or hard edges depending on processing.
-/// Obtain by calling [`foreground`](MatteHandle::foreground) on a [`MatteHandle`] or [`MaskHandle`].
+/// Obtain by calling [`foreground`](crate::MatteHandle::foreground) on a [`crate::MatteHandle`]
+/// or [`crate::MaskHandle`].
 ///
 /// # Example
 /// ```no_run
@@ -71,6 +73,43 @@ impl ForegroundHandle {
     pub fn save(&self, path: impl AsRef<Path>) -> OutlineResult<()> {
         self.image.save(path)?;
         Ok(())
+    }
+
+    /// Compute the bounding box of non-transparent content using a non-zero alpha threshold.
+    pub fn bounding_box(&self) -> Option<BoundingBox> {
+        self.bounding_box_with(1)
+    }
+
+    /// Compute the bounding box of content whose alpha is at or above `threshold`.
+    pub fn bounding_box_with(&self, threshold: u8) -> Option<BoundingBox> {
+        alpha_bounding_box(&self.image, threshold)
+    }
+
+    /// Expand the canvas by the given padding, filling new pixels with transparency.
+    pub fn pad(self, padding: impl Into<Padding>) -> Self {
+        let image = pad_rgba_image(&self.image, padding.into(), [0, 0, 0, 0]);
+        Self { image }
+    }
+
+    /// Crop the image to its non-transparent content plus `margin`.
+    ///
+    /// Returns `None` when the image has no non-transparent pixels.
+    pub fn crop_to_content(self, margin: impl Into<Padding>) -> Option<Self> {
+        self.crop_to_content_with(1, margin)
+    }
+
+    /// Crop the image to content whose alpha is at or above `threshold`, plus `margin`.
+    ///
+    /// Returns `None` when the image is fully transparent at the given threshold.
+    pub fn crop_to_content_with(self, threshold: u8, margin: impl Into<Padding>) -> Option<Self> {
+        let margin = margin.into();
+        let bounds = alpha_bounding_box(&self.image, threshold)?.expanded_to_fit(
+            margin,
+            self.image.width(),
+            self.image.height(),
+        );
+        let image = crop_rgba_image(&self.image, bounds);
+        Some(Self { image })
     }
 }
 
@@ -282,5 +321,24 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn foreground_handle_bounding_box_and_crop_work_on_alpha() {
+        let mut foreground = ForegroundHandle {
+            image: RgbaImage::from_pixel(4, 4, image::Rgba([0, 0, 0, 0])),
+        };
+        foreground
+            .image
+            .put_pixel(2, 1, image::Rgba([10, 20, 30, 200]));
+
+        let bounds = foreground.bounding_box().expect("alpha content");
+        assert_eq!(bounds, BoundingBox::new(2, 1, 1, 1));
+
+        let cropped = foreground
+            .pad(1)
+            .crop_to_content(1)
+            .expect("still has content");
+        assert_eq!(cropped.image().dimensions(), (3, 3));
     }
 }

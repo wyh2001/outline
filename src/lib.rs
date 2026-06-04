@@ -56,6 +56,7 @@ compile_error!(
 mod config;
 mod error;
 mod foreground;
+mod geometry;
 mod inference;
 mod mask;
 mod matte;
@@ -70,6 +71,8 @@ pub use crate::config::{
 pub use crate::error::{OutlineError, OutlineResult};
 #[doc(inline)]
 pub use crate::foreground::ForegroundHandle;
+#[doc(inline)]
+pub use crate::geometry::{BoundingBox, Padding};
 #[doc(inline)]
 pub use crate::mask::{MaskAlphaMode, MaskColor, MaskHandle, colorize_mask};
 #[doc(inline)]
