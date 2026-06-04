@@ -437,24 +437,24 @@ impl MaskHandle {
         }
     }
 
-    /// Get the raw  mask.
+    /// Get the raw mask.
     pub fn raw(&self) -> GrayImage {
         self.mask.clone()
     }
 
-    /// Get a reference to the mask.
+    /// Get a reference to the raw mask.
     pub fn image(&self) -> &GrayImage {
         &self.mask
     }
 
-    /// Consume the handle and return the mask.
+    /// Consume the handle and return the current mask.
     pub fn into_image(self) -> GrayImage {
-        self.mask
+        self.resolve_pending_operations().mask
     }
 
-    /// Save the mask to the specified path.
+    /// Save the current mask to the specified path.
     pub fn save(&self, path: impl AsRef<Path>) -> OutlineResult<()> {
-        self.mask.save(path)?;
+        self.resolved_mask().save(path)?;
         Ok(())
     }
 
@@ -596,13 +596,15 @@ impl MaskHandle {
 
     /// Compose the RGBA foreground image from the RGB image and the current mask.
     pub fn foreground(&self) -> OutlineResult<ForegroundHandle> {
-        let rgba = compose_foreground(self.rgb_image.as_ref(), &self.mask)?;
+        let mask = self.resolved_mask();
+        let rgba = compose_foreground(self.rgb_image.as_ref(), &mask)?;
         Ok(ForegroundHandle::new(rgba))
     }
 
-    /// Colorize this mask into a flat-color RGBA image using the provided options.
+    /// Colorize the current mask into a flat-color RGBA image.
     pub fn colorize(&self, color: impl Into<MaskColor>) -> RgbaImage {
-        colorize_mask(&self.mask, color)
+        let mask = self.resolved_mask();
+        colorize_mask(&mask, color)
     }
 
     /// Trace the current mask using the specified vectorizer and options.
@@ -610,7 +612,8 @@ impl MaskHandle {
     where
         V: MaskVectorizer,
     {
-        vectorizer.vectorize(&self.mask, options)
+        let mask = self.resolved_mask();
+        vectorizer.vectorize(&mask, options)
     }
 
     /// Expand the mask canvas by the given padding while keeping content at the same offset.
@@ -1528,6 +1531,34 @@ mod tests {
             }
         }
 
+        fn single_pixel_mask_handle() -> MaskHandle {
+            mask_handle_with_images(
+                RgbImage::from_pixel(5, 5, Rgb([10, 20, 30])),
+                GrayImage::from_fn(5, 5, |x, y| {
+                    if x == 2 && y == 2 {
+                        Luma([255])
+                    } else {
+                        Luma([0])
+                    }
+                }),
+            )
+        }
+
+        struct BoundingBoxVectorizer;
+
+        impl MaskVectorizer for BoundingBoxVectorizer {
+            type Options = ();
+            type Output = Option<BoundingBox>;
+
+            fn vectorize(
+                &self,
+                mask: &GrayImage,
+                _options: &Self::Options,
+            ) -> OutlineResult<Self::Output> {
+                Ok(mask_bounding_box(mask, 1))
+            }
+        }
+
         mod colorize {
             use super::*;
 
@@ -1651,6 +1682,83 @@ mod tests {
                 assert_eq!(foreground.image().get_pixel(1, 1)[0], 2);
                 assert_eq!(foreground.image().get_pixel(1, 1)[1], 1);
                 assert_eq!(foreground.image().get_pixel(1, 1)[3], 255);
+            }
+        }
+
+        mod pending_operations {
+            use super::*;
+
+            #[test]
+            fn mask_handle_pad_applies_pending_operations_first() {
+                let padded = single_pixel_mask_handle()
+                    .dilate_with(1.0)
+                    .pad(Padding::new(1, 2, 0, 0));
+
+                assert_eq!(
+                    mask_bounding_box(padded.image(), 1),
+                    Some(BoundingBox::new(2, 3, 3, 3))
+                );
+            }
+
+            #[test]
+            fn mask_handle_into_image_applies_pending_operations() {
+                let mask = single_pixel_mask_handle().dilate_with(1.0).into_image();
+
+                assert_eq!(
+                    mask_bounding_box(&mask, 1),
+                    Some(BoundingBox::new(1, 1, 3, 3))
+                );
+            }
+
+            #[test]
+            fn mask_handle_save_applies_pending_operations() {
+                let temp_dir = tempfile::tempdir().expect("temp dir should be created");
+                let path = temp_dir.path().join("mask.png");
+
+                single_pixel_mask_handle()
+                    .dilate_with(1.0)
+                    .save(&path)
+                    .expect("mask should save");
+
+                let saved = image::open(&path)
+                    .expect("saved mask should load")
+                    .to_luma8();
+
+                assert_eq!(
+                    mask_bounding_box(&saved, 1),
+                    Some(BoundingBox::new(1, 1, 3, 3))
+                );
+            }
+
+            #[test]
+            fn mask_handle_foreground_applies_pending_operations() {
+                let foreground = single_pixel_mask_handle()
+                    .dilate_with(1.0)
+                    .foreground()
+                    .expect("foreground should compose");
+
+                assert_eq!(foreground.image().get_pixel(1, 2)[3], 255);
+                assert_eq!(foreground.image().get_pixel(0, 0)[3], 0);
+            }
+
+            #[test]
+            fn mask_handle_colorize_applies_pending_operations() {
+                let colorized = single_pixel_mask_handle()
+                    .dilate_with(1.0)
+                    .colorize([0, 180, 255, 255]);
+
+                assert_eq!(colorized.get_pixel(1, 2).0, [0, 180, 255, 255]);
+                assert_eq!(colorized.get_pixel(0, 0).0, [0, 180, 255, 0]);
+            }
+
+            #[test]
+            fn mask_handle_trace_applies_pending_operations() {
+                let bounds = single_pixel_mask_handle()
+                    .dilate_with(1.0)
+                    .trace(&BoundingBoxVectorizer, &())
+                    .expect("trace should run");
+
+                assert_eq!(bounds, Some(BoundingBox::new(1, 1, 3, 3)));
             }
         }
     }

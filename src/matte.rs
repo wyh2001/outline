@@ -106,6 +106,14 @@ pub struct MatteHandle {
 }
 
 impl MatteHandle {
+    fn resolved_matte(&self) -> GrayImage {
+        if self.operations.is_empty() {
+            (*self.raw_matte).clone()
+        } else {
+            apply_operations(self.raw_matte.as_ref(), &self.operations)
+        }
+    }
+
     fn resolve_pending_operations(mut self) -> Self {
         if self.operations.is_empty() {
             return self;
@@ -126,14 +134,14 @@ impl MatteHandle {
         (*self.raw_matte).clone()
     }
 
-    /// Consume the handle and return the raw grayscale matte.
+    /// Consume the handle and return the current matte as a grayscale image.
     pub fn into_image(self) -> GrayImage {
-        (*self.raw_matte).clone()
+        self.resolved_matte()
     }
 
-    /// Save the raw grayscale matte to the specified path.
+    /// Save the current matte to the specified path.
     pub fn save(&self, path: impl AsRef<Path>) -> OutlineResult<()> {
-        self.raw_matte.as_ref().save(path)?;
+        self.resolved_matte().save(path)?;
         Ok(())
     }
 
@@ -144,11 +152,7 @@ impl MatteHandle {
 
     /// Compute the bounding box of the current matte at or above `threshold`.
     pub fn bounding_box_with(&self, threshold: u8) -> Option<BoundingBox> {
-        let mask = if self.operations.is_empty() {
-            (*self.raw_matte).clone()
-        } else {
-            apply_operations(self.raw_matte.as_ref(), &self.operations)
-        };
+        let mask = self.resolved_matte();
         mask_bounding_box(&mask, threshold)
     }
 
@@ -277,23 +281,26 @@ impl MatteHandle {
         ))
     }
 
-    /// Compose the RGBA foreground image from the RGB image and the raw matte.
+    /// Compose the RGBA foreground image from the RGB image and the current matte.
     pub fn foreground(&self) -> OutlineResult<ForegroundHandle> {
-        let rgba = compose_foreground(self.rgb_image.as_ref(), self.raw_matte.as_ref())?;
+        let mask = self.resolved_matte();
+        let rgba = compose_foreground(self.rgb_image.as_ref(), &mask)?;
         Ok(ForegroundHandle::new(rgba))
     }
 
-    /// Colorize the raw matte into a flat-color RGBA image using the provided options.
+    /// Colorize the current matte into a flat-color RGBA image.
     pub fn colorize(&self, color: impl Into<MaskColor>) -> RgbaImage {
-        colorize_mask(self.raw_matte.as_ref(), color)
+        let mask = self.resolved_matte();
+        colorize_mask(&mask, color)
     }
 
-    /// Trace the raw matte using the specified vectorizer and options.
+    /// Trace the current matte using the specified vectorizer and options.
     pub fn trace<V>(&self, vectorizer: &V, options: &V::Options) -> OutlineResult<V::Output>
     where
         V: MaskVectorizer,
     {
-        vectorizer.vectorize(self.raw_matte.as_ref(), options)
+        let mask = self.resolved_matte();
+        vectorizer.vectorize(&mask, options)
     }
 
     /// Expand the matte canvas by the given padding while keeping content at the same offset.
@@ -381,6 +388,22 @@ mod tests {
             operations: Vec::new(),
         }
     }
+
+    struct BoundingBoxVectorizer;
+
+    impl MaskVectorizer for BoundingBoxVectorizer {
+        type Options = ();
+        type Output = Option<BoundingBox>;
+
+        fn vectorize(
+            &self,
+            mask: &GrayImage,
+            _options: &Self::Options,
+        ) -> OutlineResult<Self::Output> {
+            Ok(mask_bounding_box(mask, 1))
+        }
+    }
+
     #[test]
     fn matte_handle_erode_uses_default_radius() {
         let handle = matte_handle().erode();
@@ -417,16 +440,7 @@ mod tests {
 
     #[test]
     fn matte_handle_bounding_box_applies_pending_operations() {
-        let mut handle = matte_handle();
-        handle.raw_matte = Arc::new(GrayImage::from_fn(5, 5, |x, y| {
-            if x == 2 && y == 2 {
-                Luma([255])
-            } else {
-                Luma([0])
-            }
-        }));
-
-        let bounds = handle
+        let bounds = single_pixel_matte_handle()
             .dilate_with(1.0)
             .bounding_box_with(1)
             .expect("expected bounding box");
@@ -486,5 +500,66 @@ mod tests {
         assert_eq!(foreground.image().get_pixel(1, 1)[0], 2);
         assert_eq!(foreground.image().get_pixel(1, 1)[1], 1);
         assert_eq!(foreground.image().get_pixel(1, 1)[3], 255);
+    }
+
+    #[test]
+    fn matte_handle_into_image_applies_pending_operations() {
+        let mask = single_pixel_matte_handle().dilate_with(1.0).into_image();
+
+        assert_eq!(
+            mask_bounding_box(&mask, 1),
+            Some(BoundingBox::new(1, 1, 3, 3))
+        );
+    }
+
+    #[test]
+    fn matte_handle_save_applies_pending_operations() {
+        let temp_dir = tempfile::tempdir().expect("temp dir should be created");
+        let path = temp_dir.path().join("matte.png");
+
+        single_pixel_matte_handle()
+            .dilate_with(1.0)
+            .save(&path)
+            .expect("matte should save");
+
+        let saved = image::open(&path)
+            .expect("saved matte should load")
+            .to_luma8();
+
+        assert_eq!(
+            mask_bounding_box(&saved, 1),
+            Some(BoundingBox::new(1, 1, 3, 3))
+        );
+    }
+
+    #[test]
+    fn matte_handle_foreground_applies_pending_operations() {
+        let foreground = single_pixel_matte_handle()
+            .dilate_with(1.0)
+            .foreground()
+            .expect("foreground should compose");
+
+        assert_eq!(foreground.image().get_pixel(1, 2)[3], 255);
+        assert_eq!(foreground.image().get_pixel(0, 0)[3], 0);
+    }
+
+    #[test]
+    fn matte_handle_colorize_applies_pending_operations() {
+        let colorized = single_pixel_matte_handle()
+            .dilate_with(1.0)
+            .colorize([0, 180, 255, 255]);
+
+        assert_eq!(colorized.get_pixel(1, 2).0, [0, 180, 255, 255]);
+        assert_eq!(colorized.get_pixel(0, 0).0, [0, 180, 255, 0]);
+    }
+
+    #[test]
+    fn matte_handle_trace_applies_pending_operations() {
+        let bounds = single_pixel_matte_handle()
+            .dilate_with(1.0)
+            .trace(&BoundingBoxVectorizer, &())
+            .expect("trace should run");
+
+        assert_eq!(bounds, Some(BoundingBox::new(1, 1, 3, 3)));
     }
 }
