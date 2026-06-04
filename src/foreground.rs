@@ -50,6 +50,7 @@ pub fn compose_foreground(rgb: &RgbImage, alpha: &GrayImage) -> OutlineResult<Rg
 /// hard.save("hard-cutout.png")?;
 /// # Ok::<_, outline::OutlineError>(())
 /// ```
+#[derive(Debug)]
 pub struct ForegroundHandle {
     image: RgbaImage,
 }
