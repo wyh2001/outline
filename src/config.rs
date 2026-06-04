@@ -58,22 +58,33 @@ impl InferenceSettings {
     }
 }
 
+/// How erosion treats pixels outside the image bounds.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ErosionBorderMode {
+    /// Treat pixels outside the image as background, allowing edge-touching foreground to shrink.
+    #[default]
+    OutsideIsBackground,
+    /// Treat pixels outside the image as unknown, so erosion only uses visible in-image background.
+    OutsideIsUnknown,
+}
+
 /// Configuration for mask post-processing operations.
 ///
-/// Defines the pipeline of blur, threshold, dilation, and hole-filling operations applied
+/// Defines the pipeline of blur, threshold, dilation, erosion, and hole-filling operations applied
 /// to raw mattes. Used as defaults in [`Outline`](crate::Outline) and can be overridden
 /// per operation via [`MatteHandle`](crate::MatteHandle) and [`MaskHandle`](crate::MaskHandle).
 ///
 /// # Explicit Configuration
 ///
-/// This struct does **not** apply automatic logic. For example, setting `dilate = true` or
-/// `fill_holes = true` will **not** automatically enable `binary`. If you need a binary mask
-/// for dilation or hole-filling to work meaningfully, you must explicitly set `binary = true`
-/// or call [`threshold`](crate::MatteHandle::threshold) in your processing chain.
+/// This struct does **not** apply automatic logic. For example, setting `dilate = true`,
+/// `erode = true`, or `fill_holes = true` will **not** automatically enable `binary`. If you
+/// need a binary mask for dilation, erosion, or hole-filling to work meaningfully, you must
+/// explicitly set `binary = true` or call [`threshold`](crate::MatteHandle::threshold) in your
+/// processing chain.
 ///
 /// **Note**: The CLI's `--binary auto` mode *does* automatically enable thresholding when
-/// `--dilate` or `--fill-holes` is specified. The library leaves this decision to you for
-/// maximum control and predictability.
+/// `--dilate`, `--erode`, or `--fill-holes` is specified. The library leaves this decision to
+/// you for maximum control and predictability.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MaskProcessingOptions {
     /// Whether to apply binary thresholding to the mask.
@@ -88,6 +99,12 @@ pub struct MaskProcessingOptions {
     pub dilate: bool,
     /// Radius in pixels for the dilation operation.
     pub dilation_radius: f32,
+    /// Whether to erode the mask using a Euclidean distance transform.
+    pub erode: bool,
+    /// Radius in pixels for the erosion operation.
+    pub erosion_radius: f32,
+    /// How erosion treats pixels outside the image bounds.
+    pub erosion_border_mode: ErosionBorderMode,
     /// Whether to fill interior holes in the binary mask.
     pub fill_holes: bool,
 }
@@ -101,6 +118,9 @@ impl Default for MaskProcessingOptions {
             mask_threshold: 120,
             dilate: false,
             dilation_radius: 5.0,
+            erode: false,
+            erosion_radius: 5.0,
+            erosion_border_mode: ErosionBorderMode::default(),
             fill_holes: false,
         }
     }

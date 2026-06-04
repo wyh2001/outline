@@ -64,7 +64,7 @@ mod vectorizer;
 
 #[doc(inline)]
 pub use crate::config::{
-    DEFAULT_MODEL_PATH, ENV_MODEL_PATH, InferenceSettings, MaskProcessingOptions,
+    DEFAULT_MODEL_PATH, ENV_MODEL_PATH, ErosionBorderMode, InferenceSettings, MaskProcessingOptions,
 };
 #[doc(inline)]
 pub use crate::error::{OutlineError, OutlineResult};

@@ -10,7 +10,7 @@ use ndarray::Array2;
 
 use crate::MaskVectorizer;
 use crate::OutlineResult;
-use crate::config::MaskProcessingOptions;
+use crate::config::{ErosionBorderMode, MaskProcessingOptions};
 use crate::foreground::{ForegroundHandle, compose_foreground};
 
 #[cfg(feature = "vectorizer-vtracer")]
@@ -19,10 +19,22 @@ use vtracer::ColorImage;
 /// A single transformation step applied to a grayscale mask image.
 #[derive(Debug, Clone)]
 pub enum MaskOperation {
-    Blur { sigma: f32 },
-    Threshold { value: u8 },
-    Dilate { radius: f32 },
-    FillHoles { threshold: u8 },
+    Blur {
+        sigma: f32,
+    },
+    Threshold {
+        value: u8,
+    },
+    Dilate {
+        radius: f32,
+    },
+    Erode {
+        radius: f32,
+        border_mode: ErosionBorderMode,
+    },
+    FillHoles {
+        threshold: u8,
+    },
 }
 
 impl MaskOperation {
@@ -31,6 +43,10 @@ impl MaskOperation {
             MaskOperation::Blur { sigma } => gaussian_blur_f32(input, *sigma),
             MaskOperation::Threshold { value } => threshold_mask(input, *value),
             MaskOperation::Dilate { radius } => dilate_euclidean(input, *radius),
+            MaskOperation::Erode {
+                radius,
+                border_mode,
+            } => erode_euclidean_with_border_mode(input, *radius, *border_mode),
             MaskOperation::FillHoles { threshold } => fill_mask_holes(input, *threshold),
         }
     }
@@ -61,6 +77,12 @@ pub fn operations_from_options(options: &MaskProcessingOptions) -> Vec<MaskOpera
     if options.dilate {
         operations.push(MaskOperation::Dilate {
             radius: options.dilation_radius,
+        });
+    }
+    if options.erode {
+        operations.push(MaskOperation::Erode {
+            radius: options.erosion_radius,
+            border_mode: options.erosion_border_mode,
         });
     }
     if options.fill_holes {
@@ -124,6 +146,10 @@ pub fn threshold_mask(gray: &GrayImage, thr: u8) -> GrayImage {
 }
 
 pub fn dilate_euclidean(mask_bin: &GrayImage, r: f32) -> GrayImage {
+    if r <= 0.0 {
+        return mask_bin.clone();
+    }
+
     let d2 = euclidean_squared_distance_transform(mask_bin);
     let r2: f64 = (r as f64) * (r as f64);
     let (w, h) = mask_bin.dimensions();
@@ -132,6 +158,50 @@ pub fn dilate_euclidean(mask_bin: &GrayImage, r: f32) -> GrayImage {
         let d2xy: f64 = d2pixel[0];
         let v: u8 = if d2xy <= r2 { 255 } else { 0 };
         *o_pixel = Luma([v]);
+    }
+    out
+}
+
+/// Erode a binary mask by the provided radius using the requested boundary behavior.
+pub fn erode_euclidean_with_border_mode(
+    mask_bin: &GrayImage,
+    r: f32,
+    border_mode: ErosionBorderMode,
+) -> GrayImage {
+    if r <= 0.0 {
+        return mask_bin.clone();
+    }
+
+    let inverted = invert_mask(mask_bin);
+    match border_mode {
+        ErosionBorderMode::OutsideIsUnknown => invert_mask(&dilate_euclidean(&inverted, r)),
+        ErosionBorderMode::OutsideIsBackground => {
+            let (w, h) = mask_bin.dimensions();
+            let padded_width = w
+                .checked_add(2)
+                .expect("padded mask width exceeds u32::MAX");
+            let padded_height = h
+                .checked_add(2)
+                .expect("padded mask height exceeds u32::MAX");
+            let mut padded = GrayImage::from_pixel(padded_width, padded_height, Luma([255]));
+            for y in 0..h {
+                for x in 0..w {
+                    padded.put_pixel(x + 1, y + 1, *inverted.get_pixel(x, y));
+                }
+            }
+            let dilated = dilate_euclidean(&padded, r);
+            let cropped = GrayImage::from_fn(w, h, |x, y| *dilated.get_pixel(x + 1, y + 1));
+            invert_mask(&cropped)
+        }
+    }
+}
+
+/// Invert a grayscale mask so each pixel becomes `255 - value`.
+pub fn invert_mask(mask: &GrayImage) -> GrayImage {
+    let (w, h) = mask.dimensions();
+    let mut out = GrayImage::new(w, h);
+    for (src, dst) in mask.pixels().zip(out.pixels_mut()) {
+        *dst = Luma([255u8.saturating_sub(src[0])]);
     }
     out
 }
@@ -326,6 +396,45 @@ impl MaskHandle {
     /// consider calling [`threshold`](MaskHandle::threshold) first.
     pub fn dilate_with(mut self, radius: f32) -> Self {
         self.operations.push(MaskOperation::Dilate { radius });
+        self
+    }
+
+    /// Add an erosion operation using the default radius.
+    ///
+    /// **Note**: Erosion typically works best on binary masks. If this mask is still grayscale,
+    /// consider calling [`threshold`](MaskHandle::threshold) first.
+    pub fn erode(mut self) -> Self {
+        let radius = self.default_mask_processing.erosion_radius;
+        let border_mode = self.default_mask_processing.erosion_border_mode;
+        self.operations.push(MaskOperation::Erode {
+            radius,
+            border_mode,
+        });
+        self
+    }
+
+    /// Add an erosion operation with a custom radius.
+    ///
+    /// **Note**: Erosion typically works best on binary masks. If this mask is still grayscale,
+    /// consider calling [`threshold`](MaskHandle::threshold) first.
+    pub fn erode_with(mut self, radius: f32) -> Self {
+        let border_mode = self.default_mask_processing.erosion_border_mode;
+        self.operations.push(MaskOperation::Erode {
+            radius,
+            border_mode,
+        });
+        self
+    }
+
+    /// Add an erosion operation with a custom radius and boundary behavior.
+    ///
+    /// **Note**: Erosion typically works best on binary masks. If this mask is still grayscale,
+    /// consider calling [`threshold`](MaskHandle::threshold) first.
+    pub fn erode_with_border_mode(mut self, radius: f32, border_mode: ErosionBorderMode) -> Self {
+        self.operations.push(MaskOperation::Erode {
+            radius,
+            border_mode,
+        });
         self
     }
 
@@ -870,6 +979,18 @@ mod tests {
                 assert_eq!(result.get_pixel(1, 0).0[0], 0);
                 assert_eq!(result.get_pixel(1, 2).0[0], 0);
             }
+
+            #[test]
+            fn negative_radius_preserves_mask() {
+                let mut input = gray_image(3, 3, 0);
+                input.put_pixel(0, 0, Luma([255]));
+                input.put_pixel(1, 1, Luma([255]));
+                input.put_pixel(2, 2, Luma([255]));
+
+                let result = dilate_euclidean(&input, -1.0);
+
+                assert_eq!(result.as_raw(), input.as_raw());
+            }
         }
 
         mod prop {
@@ -892,6 +1013,105 @@ mod tests {
                     for px in result.pixels() {
                         prop_assert!(px.0[0] == 0 || px.0[0] == 255);
                     }
+                }
+            }
+        }
+    }
+
+    mod erode_euclidean_tests {
+        use super::*;
+        use crate::config::ErosionBorderMode;
+
+        #[test]
+        fn erosion_shrinks_binary_mask() {
+            let mut input = gray_image(5, 5, 0);
+            for y in 1..4 {
+                for x in 1..4 {
+                    input.put_pixel(x, y, Luma([255]));
+                }
+            }
+
+            let result =
+                erode_euclidean_with_border_mode(&input, 1.0, ErosionBorderMode::default());
+
+            assert_eq!(result.get_pixel(2, 2).0[0], 255);
+            assert_eq!(result.get_pixel(1, 1).0[0], 0);
+            assert_eq!(result.get_pixel(1, 2).0[0], 0);
+            assert_eq!(result.get_pixel(2, 1).0[0], 0);
+            assert_eq!(result.get_pixel(3, 3).0[0], 0);
+        }
+
+        #[test]
+        fn erosion_treats_image_exterior_as_background() {
+            let input = gray_image(5, 5, 255);
+
+            let result =
+                erode_euclidean_with_border_mode(&input, 1.0, ErosionBorderMode::default());
+
+            for y in 0..5 {
+                for x in 0..5 {
+                    let expected = if x == 0 || y == 0 || x == 4 || y == 4 {
+                        0
+                    } else {
+                        255
+                    };
+                    assert_eq!(result.get_pixel(x, y).0[0], expected, "pixel ({x}, {y})");
+                }
+            }
+        }
+
+        #[test]
+        fn erosion_can_treat_image_exterior_as_unknown() {
+            let input = gray_image(5, 5, 255);
+
+            let result =
+                erode_euclidean_with_border_mode(&input, 1.0, ErosionBorderMode::OutsideIsUnknown);
+
+            assert_eq!(result.as_raw(), input.as_raw());
+        }
+
+        #[test]
+        fn erosion_radius_zero_preserves_mask() {
+            let mut input = gray_image(3, 3, 0);
+            input.put_pixel(0, 0, Luma([255]));
+            input.put_pixel(1, 1, Luma([255]));
+            input.put_pixel(2, 2, Luma([255]));
+
+            let result =
+                erode_euclidean_with_border_mode(&input, 0.0, ErosionBorderMode::default());
+
+            assert_eq!(result.as_raw(), input.as_raw());
+        }
+
+        #[test]
+        fn erosion_negative_radius_preserves_mask() {
+            let mut input = gray_image(3, 3, 0);
+            input.put_pixel(0, 0, Luma([255]));
+            input.put_pixel(1, 1, Luma([255]));
+            input.put_pixel(2, 2, Luma([255]));
+
+            let result =
+                erode_euclidean_with_border_mode(&input, -1.0, ErosionBorderMode::default());
+
+            assert_eq!(result.as_raw(), input.as_raw());
+        }
+
+        #[test]
+        fn erosion_shrinks_foreground_touching_one_edge() {
+            let mut input = gray_image(5, 5, 0);
+            for y in 1..4 {
+                for x in 0..3 {
+                    input.put_pixel(x, y, Luma([255]));
+                }
+            }
+
+            let result =
+                erode_euclidean_with_border_mode(&input, 1.0, ErosionBorderMode::default());
+
+            for y in 0..5 {
+                for x in 0..5 {
+                    let expected = if x == 1 && y == 2 { 255 } else { 0 };
+                    assert_eq!(result.get_pixel(x, y).0[0], expected, "pixel ({x}, {y})");
                 }
             }
         }
@@ -935,6 +1155,28 @@ mod tests {
                 // center and neighbors should be white
                 assert_eq!(result.get_pixel(2, 2).0[0], 255);
                 assert_eq!(result.get_pixel(2, 1).0[0], 255);
+            }
+
+            #[test]
+            fn threshold_then_erode() {
+                let mut input = gray_image(5, 5, 0);
+                for y in 1..4 {
+                    for x in 1..4 {
+                        input.put_pixel(x, y, Luma([200]));
+                    }
+                }
+
+                let ops = vec![
+                    MaskOperation::Threshold { value: 128 },
+                    MaskOperation::Erode {
+                        radius: 1.0,
+                        border_mode: ErosionBorderMode::default(),
+                    },
+                ];
+                let result = apply_operations(&input, &ops);
+
+                assert_eq!(result.get_pixel(2, 2).0[0], 255);
+                assert_eq!(result.get_pixel(1, 1).0[0], 0);
             }
 
             #[test]
@@ -997,6 +1239,13 @@ mod tests {
                     let result = apply_operations(&input, &ops_dilate);
                     prop_assert_eq!(result.dimensions(), (w, h));
 
+                    let ops_erode = vec![MaskOperation::Erode {
+                        radius: 1.0,
+                        border_mode: ErosionBorderMode::default(),
+                    }];
+                    let result = apply_operations(&input, &ops_erode);
+                    prop_assert_eq!(result.dimensions(), (w, h));
+
                     let ops_fill = vec![MaskOperation::FillHoles { threshold: 128 }];
                     let result = apply_operations(&input, &ops_fill);
                     prop_assert_eq!(result.dimensions(), (w, h));
@@ -1044,7 +1293,7 @@ mod tests {
 
             #[test]
             fn full_pipeline_order_and_values() {
-                // order: blur, threshold, dilate, fill_holes
+                // order: blur, threshold, dilate, erode, fill_holes
                 let opts = MaskProcessingOptions {
                     blur: true,
                     blur_sigma: 2.0,
@@ -1052,10 +1301,13 @@ mod tests {
                     mask_threshold: 128,
                     dilate: true,
                     dilation_radius: 5.0,
+                    erode: true,
+                    erosion_radius: 3.0,
+                    erosion_border_mode: ErosionBorderMode::OutsideIsUnknown,
                     fill_holes: true,
                 };
                 let ops = operations_from_options(&opts);
-                assert_eq!(ops.len(), 4);
+                assert_eq!(ops.len(), 5);
                 assert!(
                     matches!(ops[0], MaskOperation::Blur { sigma } if (sigma - 2.0).abs() < 1e-6)
                 );
@@ -1065,6 +1317,12 @@ mod tests {
                 );
                 assert!(matches!(
                     ops[3],
+                    MaskOperation::Erode { radius, border_mode }
+                        if (radius - 3.0).abs() < 1e-6
+                            && border_mode == ErosionBorderMode::OutsideIsUnknown
+                ));
+                assert!(matches!(
+                    ops[4],
                     MaskOperation::FillHoles { threshold: 128 }
                 ));
             }
@@ -1085,6 +1343,67 @@ mod tests {
                 assert!(matches!(
                     ops[1],
                     MaskOperation::FillHoles { threshold: 100 }
+                ));
+            }
+        }
+    }
+
+    mod mask_handle_api {
+        use super::*;
+        use image::Rgb;
+
+        fn mask_handle() -> MaskHandle {
+            MaskHandle {
+                rgb_image: Arc::new(RgbImage::from_pixel(1, 1, Rgb([255, 255, 255]))),
+                mask: GrayImage::from_pixel(1, 1, Luma([255])),
+                default_mask_processing: MaskProcessingOptions::default(),
+                operations: Vec::new(),
+            }
+        }
+
+        mod erode_builder {
+            use super::*;
+
+            #[test]
+            fn mask_handle_erode_uses_default_radius() {
+                let handle = mask_handle().erode();
+                assert!(matches!(
+                    handle.operations.as_slice(),
+                    [MaskOperation::Erode {
+                        radius,
+                        border_mode
+                    }]
+                        if (*radius - MaskProcessingOptions::default().erosion_radius).abs() < f32::EPSILON
+                            && *border_mode == MaskProcessingOptions::default().erosion_border_mode
+                ));
+            }
+
+            #[test]
+            fn mask_handle_erode_with_uses_custom_radius() {
+                let handle = mask_handle().erode_with(3.0);
+                assert!(matches!(
+                    handle.operations.as_slice(),
+                    [MaskOperation::Erode {
+                        radius,
+                        border_mode
+                    }]
+                        if (*radius - 3.0).abs() < f32::EPSILON
+                            && *border_mode == MaskProcessingOptions::default().erosion_border_mode
+                ));
+            }
+
+            #[test]
+            fn mask_handle_erode_with_border_mode_uses_custom_mode() {
+                let handle =
+                    mask_handle().erode_with_border_mode(3.0, ErosionBorderMode::OutsideIsUnknown);
+                assert!(matches!(
+                    handle.operations.as_slice(),
+                    [MaskOperation::Erode {
+                        radius,
+                        border_mode
+                    }]
+                        if (*radius - 3.0).abs() < f32::EPSILON
+                            && *border_mode == ErosionBorderMode::OutsideIsUnknown
                 ));
             }
         }

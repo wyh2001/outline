@@ -83,16 +83,17 @@ pub fn processing_requested(args: &MaskProcessingArgs) -> bool {
 }
 
 /// Check if there's a conflict between soft mask mode and operations that assume hard masks.
-/// Returns true if --no-binary is set but dilation or fill-holes are requested.
+/// Returns true if --no-binary is set but dilation, erosion, or fill-holes are requested.
 pub fn has_soft_conflict(args: &MaskProcessingArgs) -> bool {
-    args.binary == BinaryOption::Disabled && (args.dilate.is_some() || args.fill_holes)
+    args.binary == BinaryOption::Disabled
+        && (args.dilate.is_some() || args.erode.is_some() || args.fill_holes)
 }
 
-/// Emit a warning when dilation/fill-holes are requested but thresholding is disabled.
+/// Emit a warning when dilation/erosion/fill-holes are requested but thresholding is disabled.
 pub fn warn_if_soft_conflict(args: &MaskProcessingArgs, context: &str) {
     if has_soft_conflict(args) {
         eprintln!(
-            "Warning: --no-binary disables thresholding, but dilation/fill-holes assume a hard mask; {} may be unexpected.",
+            "Warning: --no-binary disables thresholding, but dilation/erosion/fill-holes assume a hard mask; {} may be unexpected.",
             context
         );
     }
@@ -441,6 +442,7 @@ mod tests {
         fn make_args(
             binary: BinaryOption,
             dilate: Option<f32>,
+            erode: Option<f32>,
             fill_holes: bool,
         ) -> MaskProcessingArgs {
             MaskProcessingArgs {
@@ -448,43 +450,51 @@ mod tests {
                 mask_threshold: 120,
                 binary,
                 dilate,
+                erode,
+                erode_border: None,
                 fill_holes,
             }
         }
 
         #[test]
         fn no_conflict_when_binary_enabled() {
-            let args = make_args(BinaryOption::Enabled, Some(5.0), true);
+            let args = make_args(BinaryOption::Enabled, Some(5.0), None, true);
             assert!(!has_soft_conflict(&args));
         }
 
         #[test]
         fn no_conflict_when_binary_auto() {
-            let args = make_args(BinaryOption::Auto, Some(5.0), true);
+            let args = make_args(BinaryOption::Auto, Some(5.0), None, true);
             assert!(!has_soft_conflict(&args));
         }
 
         #[test]
         fn no_conflict_when_disabled_without_dilate_or_fill() {
-            let args = make_args(BinaryOption::Disabled, None, false);
+            let args = make_args(BinaryOption::Disabled, None, None, false);
             assert!(!has_soft_conflict(&args));
         }
 
         #[test]
         fn conflict_when_disabled_with_dilate() {
-            let args = make_args(BinaryOption::Disabled, Some(5.0), false);
+            let args = make_args(BinaryOption::Disabled, Some(5.0), None, false);
+            assert!(has_soft_conflict(&args));
+        }
+
+        #[test]
+        fn conflict_when_disabled_with_erode() {
+            let args = make_args(BinaryOption::Disabled, None, Some(5.0), false);
             assert!(has_soft_conflict(&args));
         }
 
         #[test]
         fn conflict_when_disabled_with_fill_holes() {
-            let args = make_args(BinaryOption::Disabled, None, true);
+            let args = make_args(BinaryOption::Disabled, None, None, true);
             assert!(has_soft_conflict(&args));
         }
 
         #[test]
         fn conflict_when_disabled_with_both() {
-            let args = make_args(BinaryOption::Disabled, Some(5.0), true);
+            let args = make_args(BinaryOption::Disabled, Some(5.0), Some(5.0), true);
             assert!(has_soft_conflict(&args));
         }
     }

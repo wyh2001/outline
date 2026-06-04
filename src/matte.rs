@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use image::{GrayImage, RgbImage};
 
-use crate::config::MaskProcessingOptions;
+use crate::config::{ErosionBorderMode, MaskProcessingOptions};
 use crate::foreground::{ForegroundHandle, compose_foreground};
 use crate::mask::{MaskHandle, MaskOperation, apply_operations, operations_from_options};
 use crate::{MaskVectorizer, OutlineResult};
@@ -161,6 +161,45 @@ impl MatteHandle {
         self
     }
 
+    /// Add an erosion operation using the default radius.
+    ///
+    /// **Note**: Erosion typically works best on binary masks. Consider calling
+    /// [`threshold`](MatteHandle::threshold) before `erode` if working with a soft matte.
+    pub fn erode(mut self) -> Self {
+        let radius = self.default_mask_processing.erosion_radius;
+        let border_mode = self.default_mask_processing.erosion_border_mode;
+        self.operations.push(MaskOperation::Erode {
+            radius,
+            border_mode,
+        });
+        self
+    }
+
+    /// Add an erosion operation with a custom radius.
+    ///
+    /// **Note**: Erosion typically works best on binary masks. Consider calling
+    /// [`threshold`](MatteHandle::threshold) before `erode` if working with a soft matte.
+    pub fn erode_with(mut self, radius: f32) -> Self {
+        let border_mode = self.default_mask_processing.erosion_border_mode;
+        self.operations.push(MaskOperation::Erode {
+            radius,
+            border_mode,
+        });
+        self
+    }
+
+    /// Add an erosion operation with a custom radius and boundary behavior.
+    ///
+    /// **Note**: Erosion typically works best on binary masks. Consider calling
+    /// [`threshold`](MatteHandle::threshold) before `erode` if working with a soft matte.
+    pub fn erode_with_border_mode(mut self, radius: f32, border_mode: ErosionBorderMode) -> Self {
+        self.operations.push(MaskOperation::Erode {
+            radius,
+            border_mode,
+        });
+        self
+    }
+
     /// Add a hole-filling operation to the processing pipeline.
     ///
     /// **Note**: Hole-filling typically works best on binary masks. Consider calling
@@ -215,5 +254,54 @@ impl MatteHandle {
         V: MaskVectorizer,
     {
         vectorizer.vectorize(self.raw_matte.as_ref(), options)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use image::{Luma, Rgb};
+
+    fn matte_handle() -> MatteHandle {
+        MatteHandle {
+            rgb_image: Arc::new(RgbImage::from_pixel(1, 1, Rgb([255, 255, 255]))),
+            raw_matte: Arc::new(GrayImage::from_pixel(1, 1, Luma([255]))),
+            default_mask_processing: MaskProcessingOptions::default(),
+            operations: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn matte_handle_erode_uses_default_radius() {
+        let handle = matte_handle().erode();
+        assert!(matches!(
+            handle.operations.as_slice(),
+            [MaskOperation::Erode { radius, border_mode }]
+                if (*radius - MaskProcessingOptions::default().erosion_radius).abs() < f32::EPSILON
+                    && *border_mode == MaskProcessingOptions::default().erosion_border_mode
+        ));
+    }
+
+    #[test]
+    fn matte_handle_erode_with_uses_custom_radius() {
+        let handle = matte_handle().erode_with(2.5);
+        assert!(matches!(
+            handle.operations.as_slice(),
+            [MaskOperation::Erode { radius, border_mode }]
+                if (*radius - 2.5).abs() < f32::EPSILON
+                    && *border_mode == MaskProcessingOptions::default().erosion_border_mode
+        ));
+    }
+
+    #[test]
+    fn matte_handle_erode_with_border_mode_uses_custom_mode() {
+        let handle =
+            matte_handle().erode_with_border_mode(2.5, ErosionBorderMode::OutsideIsUnknown);
+        assert!(matches!(
+            handle.operations.as_slice(),
+            [MaskOperation::Erode { radius, border_mode }]
+                if (*radius - 2.5).abs() < f32::EPSILON
+                    && *border_mode == ErosionBorderMode::OutsideIsUnknown
+        ));
     }
 }

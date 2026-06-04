@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand, ValueEnum, ValueHint};
 use image::imageops::FilterType;
-use outline::{MaskProcessingOptions, TraceOptions};
+use outline::{ErosionBorderMode, MaskProcessingOptions, TraceOptions};
 use visioncortex::PathSimplifyMode;
 use vtracer::{ColorMode, Hierarchical};
 
@@ -156,6 +156,16 @@ pub struct MaskProcessingArgs {
     pub binary: BinaryOption,
     #[arg(long = "dilate", value_name = "RADIUS", num_args = 0..=1, default_missing_value = "5.0")]
     pub dilate: Option<f32>,
+    #[arg(long = "erode", value_name = "RADIUS", num_args = 0..=1, default_missing_value = "5.0")]
+    pub erode: Option<f32>,
+    /// How erosion treats pixels outside the image bounds
+    #[arg(
+        long = "erode-border",
+        value_enum,
+        value_name = "MODE",
+        requires = "erode"
+    )]
+    pub erode_border: Option<ErosionBorderArg>,
     /// Fill enclosed holes in the mask before vectorization
     #[arg(long = "fill-holes")]
     pub fill_holes: bool,
@@ -166,14 +176,38 @@ impl From<&MaskProcessingArgs> for MaskProcessingOptions {
         let defaults = MaskProcessingOptions::default();
         Self {
             binary: (args.binary == BinaryOption::Auto
-                && (args.dilate.is_some() || args.fill_holes))
+                && (args.dilate.is_some() || args.erode.is_some() || args.fill_holes))
                 || args.binary == BinaryOption::Enabled,
             blur: args.blur.is_some(),
             blur_sigma: args.blur.unwrap_or(defaults.blur_sigma),
             mask_threshold: args.mask_threshold,
             dilate: args.dilate.is_some(),
             dilation_radius: args.dilate.unwrap_or(defaults.dilation_radius),
+            erode: args.erode.is_some(),
+            erosion_radius: args.erode.unwrap_or(defaults.erosion_radius),
+            erosion_border_mode: if args.erode.is_some() {
+                args.erode_border
+                    .map(Into::into)
+                    .unwrap_or(defaults.erosion_border_mode)
+            } else {
+                defaults.erosion_border_mode
+            },
             fill_holes: args.fill_holes,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum, PartialEq, Eq)]
+pub enum ErosionBorderArg {
+    OutsideIsBackground,
+    OutsideIsUnknown,
+}
+
+impl From<ErosionBorderArg> for ErosionBorderMode {
+    fn from(value: ErosionBorderArg) -> Self {
+        match value {
+            ErosionBorderArg::OutsideIsBackground => ErosionBorderMode::OutsideIsBackground,
+            ErosionBorderArg::OutsideIsUnknown => ErosionBorderMode::OutsideIsUnknown,
         }
     }
 }
@@ -535,6 +569,8 @@ mod tests {
                 mask_threshold: 120,
                 binary: BinaryOption::Auto,
                 dilate: None,
+                erode: None,
+                erode_border: None,
                 fill_holes: false,
             }
         }
@@ -543,7 +579,7 @@ mod tests {
             use super::*;
 
             #[test]
-            fn auto_no_dilate_no_fill_holes_yields_binary_false() {
+            fn auto_without_hard_mask_ops_yields_binary_false() {
                 let args = default_args();
                 let opts = MaskProcessingOptions::from(&args);
                 assert!(!opts.binary);
@@ -563,6 +599,16 @@ mod tests {
             fn auto_with_dilate_yields_binary_true() {
                 let args = MaskProcessingArgs {
                     dilate: Some(5.0),
+                    ..default_args()
+                };
+                let opts = MaskProcessingOptions::from(&args);
+                assert!(opts.binary);
+            }
+
+            #[test]
+            fn auto_with_erode_yields_binary_true() {
+                let args = MaskProcessingArgs {
+                    erode: Some(5.0),
                     ..default_args()
                 };
                 let opts = MaskProcessingOptions::from(&args);
@@ -610,6 +656,35 @@ mod tests {
                 let opts = MaskProcessingOptions::from(&args);
                 assert!(opts.dilate);
                 assert!((opts.dilation_radius - 8.0).abs() < f32::EPSILON);
+            }
+
+            #[test]
+            fn erode_flags_and_radius() {
+                let args = MaskProcessingArgs {
+                    erode: Some(3.0),
+                    ..default_args()
+                };
+                let opts = MaskProcessingOptions::from(&args);
+                assert!(opts.erode);
+                assert!((opts.erosion_radius - 3.0).abs() < f32::EPSILON);
+                assert_eq!(
+                    opts.erosion_border_mode,
+                    MaskProcessingOptions::default().erosion_border_mode
+                );
+            }
+
+            #[test]
+            fn erode_border_passed_through_when_erode_enabled() {
+                let args = MaskProcessingArgs {
+                    erode: Some(3.0),
+                    erode_border: Some(ErosionBorderArg::OutsideIsUnknown),
+                    ..default_args()
+                };
+                let opts = MaskProcessingOptions::from(&args);
+                assert_eq!(
+                    opts.erosion_border_mode,
+                    ErosionBorderMode::OutsideIsUnknown
+                );
             }
 
             #[test]
@@ -830,6 +905,49 @@ mod tests {
                 fn dilate_with_value_uses_provided() {
                     let cmd = parse_cmd!(["outline", "mask", "in.png", "--dilate", "8.0"], Mask);
                     assert_eq!(cmd.mask_processing.dilate, Some(8.0));
+                }
+
+                #[test]
+                fn erode_flag_only_uses_default_radius() {
+                    let cmd = parse_cmd!(["outline", "mask", "in.png", "--erode"], Mask);
+                    assert_eq!(cmd.mask_processing.erode, Some(5.0));
+                }
+
+                #[test]
+                fn erode_with_value_uses_provided() {
+                    let cmd = parse_cmd!(["outline", "mask", "in.png", "--erode", "3.0"], Mask);
+                    assert_eq!(cmd.mask_processing.erode, Some(3.0));
+                }
+
+                #[test]
+                fn erode_border_outside_is_unknown_parses() {
+                    let cmd = parse_cmd!(
+                        [
+                            "outline",
+                            "mask",
+                            "in.png",
+                            "--erode",
+                            "--erode-border",
+                            "outside-is-unknown"
+                        ],
+                        Mask
+                    );
+                    assert_eq!(
+                        cmd.mask_processing.erode_border,
+                        Some(ErosionBorderArg::OutsideIsUnknown)
+                    );
+                }
+
+                #[test]
+                fn erode_border_requires_erode() {
+                    let result = Cli::try_parse_from([
+                        "outline",
+                        "mask",
+                        "in.png",
+                        "--erode-border",
+                        "outside-is-unknown",
+                    ]);
+                    assert!(result.is_err());
                 }
             }
         }
