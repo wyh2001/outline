@@ -438,14 +438,26 @@ impl MaskHandle {
         }
     }
 
-    /// Get the raw mask.
-    pub fn raw(&self) -> GrayImage {
+    /// Clone and return the raw mask.
+    pub fn to_raw_mask(&self) -> GrayImage {
         self.mask.clone()
     }
 
     /// Get a reference to the raw mask.
-    pub fn image(&self) -> &GrayImage {
+    pub fn as_raw_mask(&self) -> &GrayImage {
         &self.mask
+    }
+
+    /// Get the raw mask.
+    #[deprecated(note = "use to_raw_mask()")]
+    pub fn raw(&self) -> GrayImage {
+        self.to_raw_mask()
+    }
+
+    /// Get a reference to the raw mask.
+    #[deprecated(note = "use as_raw_mask()")]
+    pub fn image(&self) -> &GrayImage {
+        self.as_raw_mask()
     }
 
     /// Consume the handle and return the current mask.
@@ -1660,7 +1672,7 @@ mod tests {
 
                 let padded = mask_handle_with_images(rgb, mask).pad(Padding::new(1, 2, 3, 4));
 
-                assert_eq!(padded.image().dimensions(), (6, 8));
+                assert_eq!(padded.as_raw_mask().dimensions(), (6, 8));
                 let foreground = padded.foreground().expect("foreground should compose");
                 assert_eq!(foreground.image().dimensions(), (6, 8));
                 assert_eq!(foreground.image().get_pixel(2, 3)[3], 255);
@@ -1677,7 +1689,7 @@ mod tests {
                     .crop_to_content(1)
                     .expect("mask has content");
 
-                assert_eq!(cropped.image().dimensions(), (3, 4));
+                assert_eq!(cropped.as_raw_mask().dimensions(), (3, 4));
                 let foreground = cropped.foreground().expect("foreground should compose");
                 assert_eq!(foreground.image().dimensions(), (3, 4));
                 assert_eq!(foreground.image().get_pixel(1, 1)[0], 2);
@@ -1696,7 +1708,7 @@ mod tests {
                     .pad(Padding::new(1, 2, 0, 0));
 
                 assert_eq!(
-                    mask_bounding_box(padded.image(), 1),
+                    mask_bounding_box(padded.as_raw_mask(), 1),
                     Some(BoundingBox::new(2, 3, 3, 3))
                 );
             }

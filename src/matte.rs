@@ -130,9 +130,20 @@ impl MatteHandle {
         }
     }
 
-    /// Get the raw grayscale matte.
-    pub fn raw(&self) -> GrayImage {
+    /// Clone and return the raw grayscale matte.
+    pub fn to_raw_matte(&self) -> GrayImage {
         (*self.raw_matte).clone()
+    }
+
+    /// Get a reference to the raw grayscale matte.
+    pub fn as_raw_matte(&self) -> &GrayImage {
+        self.raw_matte.as_ref()
+    }
+
+    /// Get the raw grayscale matte.
+    #[deprecated(note = "use to_raw_matte()")]
+    pub fn raw(&self) -> GrayImage {
+        self.to_raw_matte()
     }
 
     /// Consume the handle and return the current matte as a grayscale image.
@@ -410,6 +421,18 @@ mod tests {
     }
 
     #[test]
+    fn matte_handle_raw_accessors_return_original_matte() {
+        let handle = single_pixel_matte_handle().dilate_with(1.0);
+
+        assert_eq!(handle.as_raw_matte().dimensions(), (5, 5));
+        assert_eq!(handle.as_raw_matte().get_pixel(2, 2).0[0], 255);
+        assert_eq!(handle.as_raw_matte().get_pixel(1, 2).0[0], 0);
+
+        let cloned = handle.to_raw_matte();
+        assert_eq!(cloned.as_raw(), handle.as_raw_matte().as_raw());
+    }
+
+    #[test]
     fn matte_handle_erode_uses_default_radius() {
         let handle = matte_handle().erode();
         assert!(matches!(
@@ -470,7 +493,7 @@ mod tests {
 
         let padded = matte_handle_with_images(rgb, matte).pad(Padding::new(1, 2, 3, 4));
 
-        assert_eq!(padded.raw().dimensions(), (6, 8));
+        assert_eq!(padded.as_raw_matte().dimensions(), (6, 8));
         let foreground = padded.foreground().expect("foreground should compose");
         assert_eq!(foreground.image().dimensions(), (6, 8));
         assert_eq!(foreground.image().get_pixel(2, 3)[3], 255);
@@ -483,7 +506,7 @@ mod tests {
             .pad(Padding::new(1, 2, 0, 0));
 
         assert_eq!(
-            mask_bounding_box(&padded.raw(), 1),
+            mask_bounding_box(padded.as_raw_matte(), 1),
             Some(BoundingBox::new(2, 3, 3, 3))
         );
     }
@@ -499,7 +522,7 @@ mod tests {
             .crop_to_content(1)
             .expect("matte has content");
 
-        assert_eq!(cropped.raw().dimensions(), (3, 4));
+        assert_eq!(cropped.as_raw_matte().dimensions(), (3, 4));
         let foreground = cropped.foreground().expect("foreground should compose");
         assert_eq!(foreground.image().dimensions(), (3, 4));
         assert_eq!(foreground.image().get_pixel(1, 1)[0], 2);
