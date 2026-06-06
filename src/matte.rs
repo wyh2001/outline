@@ -140,6 +140,11 @@ impl MatteHandle {
         self.raw_matte.as_ref()
     }
 
+    /// Return the current matte canvas dimensions.
+    pub fn dimensions(&self) -> (u32, u32) {
+        self.raw_matte.dimensions()
+    }
+
     /// Get the raw grayscale matte.
     #[deprecated(note = "use to_raw_matte()")]
     pub fn raw(&self) -> GrayImage {
@@ -427,6 +432,17 @@ mod tests {
     }
 
     #[test]
+    fn matte_handle_dimensions_reports_current_canvas() {
+        let cropped = single_pixel_matte_handle()
+            .crop(BoundingBox::new(1, 1, 2, 3))
+            .expect("bounds are inside the image");
+        assert_eq!(cropped.dimensions(), (2, 3));
+
+        let padded = cropped.pad(Padding::new(1, 2, 3, 4));
+        assert_eq!(padded.dimensions(), (6, 9));
+    }
+
+    #[test]
     fn matte_handle_raw_accessors_return_original_matte() {
         let handle = single_pixel_matte_handle().dilate_with(1.0);
 
@@ -499,9 +515,9 @@ mod tests {
 
         let padded = matte_handle_with_images(rgb, matte).pad(Padding::new(1, 2, 3, 4));
 
-        assert_eq!(padded.as_raw_matte().dimensions(), (6, 8));
+        assert_eq!(padded.dimensions(), (6, 8));
         let foreground = padded.foreground().expect("foreground should compose");
-        assert_eq!(foreground.image().dimensions(), (6, 8));
+        assert_eq!(foreground.dimensions(), (6, 8));
         assert_eq!(foreground.image().get_pixel(2, 3)[3], 255);
     }
 
@@ -528,9 +544,9 @@ mod tests {
             .crop_to_content()
             .expect("matte has content");
 
-        assert_eq!(cropped.as_raw_matte().dimensions(), (1, 2));
+        assert_eq!(cropped.dimensions(), (1, 2));
         let foreground = cropped.foreground().expect("foreground should compose");
-        assert_eq!(foreground.image().dimensions(), (1, 2));
+        assert_eq!(foreground.dimensions(), (1, 2));
         assert_eq!(foreground.image().get_pixel(0, 0)[0], 2);
         assert_eq!(foreground.image().get_pixel(0, 0)[1], 1);
         assert_eq!(foreground.image().get_pixel(0, 0)[3], 255);
@@ -546,7 +562,7 @@ mod tests {
             .crop(BoundingBox::new(1, 1, 2, 2))
             .expect("bounds are inside the image");
 
-        assert_eq!(cropped.as_raw_matte().dimensions(), (2, 2));
+        assert_eq!(cropped.dimensions(), (2, 2));
         assert_eq!(cropped.as_raw_matte().get_pixel(1, 0)[0], 255);
         let foreground = cropped.foreground().expect("foreground should compose");
         assert_eq!(foreground.image().get_pixel(1, 0)[0], 2);
@@ -579,7 +595,7 @@ mod tests {
             .crop_to_content_with(128)
             .expect("matte has content above threshold");
 
-        assert_eq!(cropped.as_raw_matte().dimensions(), (1, 1));
+        assert_eq!(cropped.dimensions(), (1, 1));
         assert_eq!(cropped.as_raw_matte().get_pixel(0, 0)[0], 200);
         let foreground = cropped.foreground().expect("foreground should compose");
         assert_eq!(foreground.image().get_pixel(0, 0)[0], 3);

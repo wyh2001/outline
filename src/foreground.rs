@@ -65,6 +65,11 @@ impl ForegroundHandle {
         &self.image
     }
 
+    /// Return the foreground image dimensions.
+    pub fn dimensions(&self) -> (u32, u32) {
+        self.image.dimensions()
+    }
+
     /// Consume the handle and return the RGBA foreground image.
     pub fn into_image(self) -> RgbaImage {
         self.image
@@ -332,6 +337,22 @@ mod tests {
     }
 
     #[test]
+    fn foreground_handle_dimensions_reports_current_canvas() {
+        let foreground = ForegroundHandle {
+            image: RgbaImage::from_pixel(4, 3, image::Rgba([0, 0, 0, 0])),
+        };
+        assert_eq!(foreground.dimensions(), (4, 3));
+
+        let cropped = foreground
+            .crop(BoundingBox::new(1, 1, 2, 2))
+            .expect("bounds are inside the image");
+        assert_eq!(cropped.dimensions(), (2, 2));
+
+        let padded = cropped.pad(Padding::new(1, 2, 3, 4));
+        assert_eq!(padded.dimensions(), (6, 8));
+    }
+
+    #[test]
     fn foreground_handle_bounding_box_and_crop_work_on_alpha() {
         let mut foreground = ForegroundHandle {
             image: RgbaImage::from_pixel(4, 4, image::Rgba([0, 0, 0, 0])),
@@ -344,7 +365,7 @@ mod tests {
         assert_eq!(bounds, BoundingBox::new(2, 1, 1, 1));
 
         let cropped = foreground.crop_to_content().expect("still has content");
-        assert_eq!(cropped.image().dimensions(), (1, 1));
+        assert_eq!(cropped.dimensions(), (1, 1));
         assert_eq!(cropped.image().get_pixel(0, 0).0, [10, 20, 30, 200]);
     }
 
@@ -361,7 +382,7 @@ mod tests {
             .crop(BoundingBox::new(1, 1, 2, 2))
             .expect("bounds are inside the image");
 
-        assert_eq!(cropped.image().dimensions(), (2, 2));
+        assert_eq!(cropped.dimensions(), (2, 2));
         assert_eq!(cropped.image().get_pixel(1, 0).0, [10, 20, 30, 200]);
     }
 
@@ -396,7 +417,7 @@ mod tests {
             .crop_to_content_with(128)
             .expect("foreground has content above threshold");
 
-        assert_eq!(cropped.image().dimensions(), (1, 1));
+        assert_eq!(cropped.dimensions(), (1, 1));
         assert_eq!(cropped.image().get_pixel(0, 0).0, [40, 50, 60, 200]);
     }
 }
