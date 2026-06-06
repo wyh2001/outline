@@ -3,7 +3,7 @@ use std::collections::VecDeque;
 use std::path::Path;
 use std::sync::Arc;
 
-use image::{GrayImage, Luma, RgbImage, Rgba, RgbaImage};
+use image::{GrayImage, Luma, Rgb, RgbImage, Rgba, RgbaImage};
 use imageproc::contrast::{ThresholdType, threshold as ip_threshold};
 use imageproc::distance_transform::euclidean_squared_distance_transform;
 use imageproc::filter::gaussian_blur_f32;
@@ -308,22 +308,52 @@ pub enum MaskAlphaMode {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MaskColor {
     /// Flat RGBA color applied to mask-covered pixels; A acts as a global opacity multiplier.
-    pub color: [u8; 4],
+    color: [u8; 4],
     /// How mask values influence the output alpha.
-    pub alpha_mode: MaskAlphaMode,
+    alpha_mode: MaskAlphaMode,
 }
 
 impl MaskColor {
-    /// Create a flat-color mask colorization that uses the mask as-is for alpha.
-    pub fn new(color: [u8; 4]) -> Self {
+    /// Create a mask color from an RGBA array.
+    pub const fn new(color: [u8; 4]) -> Self {
+        Self::from_rgba(color)
+    }
+
+    /// Create an opaque mask color from RGB channels.
+    pub const fn rgb(r: u8, g: u8, b: u8) -> Self {
+        Self::from_rgb([r, g, b])
+    }
+
+    /// Create a mask color from RGBA channels.
+    pub const fn rgba(r: u8, g: u8, b: u8, a: u8) -> Self {
+        Self::from_rgba([r, g, b, a])
+    }
+
+    /// Create an opaque mask color from an RGB array.
+    pub const fn from_rgb([r, g, b]: [u8; 3]) -> Self {
+        Self::from_rgba([r, g, b, 255])
+    }
+
+    /// Create a mask color from an RGBA array.
+    pub const fn from_rgba(color: [u8; 4]) -> Self {
         Self {
             color,
             alpha_mode: MaskAlphaMode::UseMask,
         }
     }
 
+    /// Return the flat RGBA color.
+    pub const fn to_rgba8(self) -> [u8; 4] {
+        self.color
+    }
+
+    /// Return how mask values influence the output alpha.
+    pub const fn alpha_mode(self) -> MaskAlphaMode {
+        self.alpha_mode
+    }
+
     /// Override the alpha mode while keeping the color.
-    pub fn with_alpha_mode(mut self, alpha_mode: MaskAlphaMode) -> Self {
+    pub const fn with_alpha_mode(mut self, alpha_mode: MaskAlphaMode) -> Self {
         self.alpha_mode = alpha_mode;
         self
     }
@@ -337,7 +367,25 @@ impl Default for MaskColor {
 
 impl From<[u8; 4]> for MaskColor {
     fn from(color: [u8; 4]) -> Self {
-        Self::new(color)
+        Self::from_rgba(color)
+    }
+}
+
+impl From<[u8; 3]> for MaskColor {
+    fn from(color: [u8; 3]) -> Self {
+        Self::from_rgb(color)
+    }
+}
+
+impl From<Rgb<u8>> for MaskColor {
+    fn from(color: Rgb<u8>) -> Self {
+        Self::from_rgb(color.0)
+    }
+}
+
+impl From<Rgba<u8>> for MaskColor {
+    fn from(color: Rgba<u8>) -> Self {
+        Self::from_rgba(color.0)
     }
 }
 
@@ -365,11 +413,11 @@ fn resolve_mask_alpha(mask_value: u8, mode: MaskAlphaMode) -> u8 {
 pub fn colorize_mask(mask: &GrayImage, color: impl Into<MaskColor>) -> RgbaImage {
     let color = color.into();
     let (w, h) = mask.dimensions();
-    let [r, g, b, base_alpha] = color.color;
+    let [r, g, b, base_alpha] = color.to_rgba8();
 
     let mut out = RgbaImage::new(w, h);
     for (mask_px, out_px) in mask.pixels().zip(out.pixels_mut()) {
-        let mask_alpha = resolve_mask_alpha(mask_px[0], color.alpha_mode);
+        let mask_alpha = resolve_mask_alpha(mask_px[0], color.alpha_mode());
         let alpha = ((mask_alpha as u16 * base_alpha as u16) / 255) as u8;
         *out_px = Rgba([r, g, b, alpha]);
     }
@@ -1589,8 +1637,48 @@ mod tests {
             #[test]
             fn default_color_is_white_with_mask_alpha() {
                 let color = MaskColor::default();
-                assert_eq!(color.color, [255, 255, 255, 255]);
-                assert!(matches!(color.alpha_mode, MaskAlphaMode::UseMask));
+                assert_eq!(color.to_rgba8(), [255, 255, 255, 255]);
+                assert!(matches!(color.alpha_mode(), MaskAlphaMode::UseMask));
+            }
+
+            #[test]
+            fn rgb_constructor_defaults_to_opaque_alpha() {
+                let color = MaskColor::rgb(10, 20, 30);
+
+                assert_eq!(color.to_rgba8(), [10, 20, 30, 255]);
+                assert!(matches!(color.alpha_mode(), MaskAlphaMode::UseMask));
+            }
+
+            #[test]
+            fn rgba_constructor_keeps_all_channels() {
+                let color = MaskColor::rgba(10, 20, 30, 40);
+
+                assert_eq!(color.to_rgba8(), [10, 20, 30, 40]);
+                assert!(matches!(color.alpha_mode(), MaskAlphaMode::UseMask));
+            }
+
+            #[test]
+            fn rgb_array_color_defaults_to_opaque_alpha() {
+                let color = MaskColor::from([10, 20, 30]);
+
+                assert_eq!(color.to_rgba8(), [10, 20, 30, 255]);
+                assert!(matches!(color.alpha_mode(), MaskAlphaMode::UseMask));
+            }
+
+            #[test]
+            fn rgb_pixel_color_defaults_to_opaque_alpha() {
+                let color = MaskColor::from(Rgb([10, 20, 30]));
+
+                assert_eq!(color.to_rgba8(), [10, 20, 30, 255]);
+                assert!(matches!(color.alpha_mode(), MaskAlphaMode::UseMask));
+            }
+
+            #[test]
+            fn rgba_pixel_color_keeps_all_channels() {
+                let color = MaskColor::from(Rgba([10, 20, 30, 40]));
+
+                assert_eq!(color.to_rgba8(), [10, 20, 30, 40]);
+                assert!(matches!(color.alpha_mode(), MaskAlphaMode::UseMask));
             }
 
             #[test]
