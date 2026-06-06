@@ -37,19 +37,6 @@ impl BoundingBox {
             .checked_add(self.height)
             .expect("bounding box bottom edge exceeds u32::MAX")
     }
-
-    /// Expand the bounding box by `padding`, clamped to the image dimensions.
-    pub fn expanded_to_fit(self, padding: Padding, image_width: u32, image_height: u32) -> Self {
-        let x = self.x.saturating_sub(padding.left);
-        let y = self.y.saturating_sub(padding.top);
-        let right = self.right().saturating_add(padding.right).min(image_width);
-        let bottom = self
-            .bottom()
-            .saturating_add(padding.bottom)
-            .min(image_height);
-
-        Self::new(x, y, right.saturating_sub(x), bottom.saturating_sub(y))
-    }
 }
 
 /// Per-edge image padding.
@@ -153,6 +140,25 @@ pub fn alpha_bounding_box(image: &RgbaImage, threshold: u8) -> Option<BoundingBo
     found.then(|| BoundingBox::new(min_x, min_y, max_x - min_x + 1, max_y - min_y + 1))
 }
 
+pub(crate) fn crop_bounds_fit_image(
+    bounds: BoundingBox,
+    image_width: u32,
+    image_height: u32,
+) -> bool {
+    if bounds.width == 0 || bounds.height == 0 {
+        return false;
+    }
+
+    let Some(right) = bounds.x.checked_add(bounds.width) else {
+        return false;
+    };
+    let Some(bottom) = bounds.y.checked_add(bounds.height) else {
+        return false;
+    };
+
+    right <= image_width && bottom <= image_height
+}
+
 pub fn pad_gray_image(image: &GrayImage, padding: Padding, fill: u8) -> GrayImage {
     let (w, h) = image.dimensions();
     let out_width = w
@@ -238,6 +244,20 @@ mod tests {
 
         let bounds = alpha_bounding_box(&image, 1).expect("expected alpha bounds");
         assert_eq!(bounds, BoundingBox::new(1, 2, 1, 1));
+    }
+
+    #[test]
+    fn crop_bounds_fit_image_rejects_empty_and_out_of_bounds_boxes() {
+        assert!(crop_bounds_fit_image(BoundingBox::new(1, 1, 2, 2), 4, 4));
+        assert!(!crop_bounds_fit_image(BoundingBox::new(1, 1, 0, 2), 4, 4));
+        assert!(!crop_bounds_fit_image(BoundingBox::new(1, 1, 2, 0), 4, 4));
+        assert!(!crop_bounds_fit_image(BoundingBox::new(3, 1, 2, 2), 4, 4));
+        assert!(!crop_bounds_fit_image(BoundingBox::new(1, 3, 2, 2), 4, 4));
+        assert!(!crop_bounds_fit_image(
+            BoundingBox::new(u32::MAX, 1, 2, 2),
+            4,
+            4
+        ));
     }
 
     #[test]

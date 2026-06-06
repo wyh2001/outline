@@ -7,8 +7,8 @@ use image::{GrayImage, RgbImage, RgbaImage};
 use crate::config::{ErosionBorderMode, MaskProcessingOptions};
 use crate::foreground::{ForegroundHandle, compose_foreground};
 use crate::geometry::{
-    BoundingBox, Padding, crop_gray_image, crop_rgb_image, mask_bounding_box, pad_gray_image,
-    pad_rgb_image,
+    BoundingBox, Padding, crop_bounds_fit_image, crop_gray_image, crop_rgb_image,
+    mask_bounding_box, pad_gray_image, pad_rgb_image,
 };
 use crate::mask::{
     MaskColor, MaskHandle, MaskOperation, apply_operations, colorize_mask, operations_from_options,
@@ -337,25 +337,15 @@ impl MatteHandle {
         }
     }
 
-    /// Crop the matte and source RGB image to the smallest non-zero content box plus `margin`.
+    /// Crop the matte and source RGB image to `bounds`.
     ///
-    /// Returns `None` when the current matte has no non-zero pixels.
-    pub fn crop_to_content(self, margin: impl Into<Padding>) -> Option<Self> {
-        self.crop_to_content_with(1, margin)
-    }
-
-    /// Crop the matte and source RGB image to the smallest content box at or above `threshold`,
-    /// plus `margin`.
-    ///
-    /// Returns `None` when the current matte has no pixels at or above `threshold`.
-    pub fn crop_to_content_with(self, threshold: u8, margin: impl Into<Padding>) -> Option<Self> {
+    /// Returns `None` when `bounds` is empty or outside the current matte canvas.
+    pub fn crop(self, bounds: BoundingBox) -> Option<Self> {
         let this = self.resolve_pending_operations();
-        let margin = margin.into();
-        let bounds = mask_bounding_box(this.raw_matte.as_ref(), threshold)?.expanded_to_fit(
-            margin,
-            this.raw_matte.width(),
-            this.raw_matte.height(),
-        );
+        if !crop_bounds_fit_image(bounds, this.raw_matte.width(), this.raw_matte.height()) {
+            return None;
+        }
+
         let matte = Arc::new(crop_gray_image(this.raw_matte.as_ref(), bounds));
         let rgb = Arc::new(crop_rgb_image(this.rgb_image.as_ref(), bounds));
         Some(Self {
@@ -364,6 +354,22 @@ impl MatteHandle {
             default_mask_processing: this.default_mask_processing,
             operations: Vec::new(),
         })
+    }
+
+    /// Crop the matte and source RGB image to the smallest non-zero content box.
+    ///
+    /// Returns `None` when the current matte has no non-zero pixels.
+    pub fn crop_to_content(self) -> Option<Self> {
+        self.crop_to_content_with(1)
+    }
+
+    /// Crop the matte and source RGB image to the smallest content box at or above `threshold`.
+    ///
+    /// Returns `None` when the current matte has no pixels at or above `threshold`.
+    pub fn crop_to_content_with(self, threshold: u8) -> Option<Self> {
+        let this = self.resolve_pending_operations();
+        let bounds = mask_bounding_box(this.raw_matte.as_ref(), threshold)?;
+        this.crop(bounds)
     }
 }
 
@@ -519,15 +525,66 @@ mod tests {
         matte.put_pixel(2, 2, Luma([255]));
 
         let cropped = matte_handle_with_images(rgb, matte)
-            .crop_to_content(1)
+            .crop_to_content()
             .expect("matte has content");
 
-        assert_eq!(cropped.as_raw_matte().dimensions(), (3, 4));
+        assert_eq!(cropped.as_raw_matte().dimensions(), (1, 2));
         let foreground = cropped.foreground().expect("foreground should compose");
-        assert_eq!(foreground.image().dimensions(), (3, 4));
-        assert_eq!(foreground.image().get_pixel(1, 1)[0], 2);
-        assert_eq!(foreground.image().get_pixel(1, 1)[1], 1);
-        assert_eq!(foreground.image().get_pixel(1, 1)[3], 255);
+        assert_eq!(foreground.image().dimensions(), (1, 2));
+        assert_eq!(foreground.image().get_pixel(0, 0)[0], 2);
+        assert_eq!(foreground.image().get_pixel(0, 0)[1], 1);
+        assert_eq!(foreground.image().get_pixel(0, 0)[3], 255);
+    }
+
+    #[test]
+    fn matte_handle_crop_uses_requested_bounds() {
+        let rgb = RgbImage::from_fn(4, 4, |x, y| Rgb([x as u8, y as u8, 0]));
+        let mut matte = GrayImage::from_pixel(4, 4, Luma([0]));
+        matte.put_pixel(2, 1, Luma([255]));
+
+        let cropped = matte_handle_with_images(rgb, matte)
+            .crop(BoundingBox::new(1, 1, 2, 2))
+            .expect("bounds are inside the image");
+
+        assert_eq!(cropped.as_raw_matte().dimensions(), (2, 2));
+        assert_eq!(cropped.as_raw_matte().get_pixel(1, 0)[0], 255);
+        let foreground = cropped.foreground().expect("foreground should compose");
+        assert_eq!(foreground.image().get_pixel(1, 0)[0], 2);
+        assert_eq!(foreground.image().get_pixel(1, 0)[1], 1);
+        assert_eq!(foreground.image().get_pixel(1, 0)[3], 255);
+    }
+
+    #[test]
+    fn matte_handle_crop_rejects_invalid_bounds() {
+        assert!(
+            single_pixel_matte_handle()
+                .crop(BoundingBox::new(4, 4, 2, 2))
+                .is_none()
+        );
+        assert!(
+            single_pixel_matte_handle()
+                .crop(BoundingBox::new(0, 0, 0, 1))
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn matte_handle_crop_to_content_with_ignores_low_values() {
+        let rgb = RgbImage::from_fn(5, 3, |x, y| Rgb([x as u8, y as u8, 0]));
+        let mut matte = GrayImage::from_pixel(5, 3, Luma([0]));
+        matte.put_pixel(1, 1, Luma([32]));
+        matte.put_pixel(3, 1, Luma([200]));
+
+        let cropped = matte_handle_with_images(rgb, matte)
+            .crop_to_content_with(128)
+            .expect("matte has content above threshold");
+
+        assert_eq!(cropped.as_raw_matte().dimensions(), (1, 1));
+        assert_eq!(cropped.as_raw_matte().get_pixel(0, 0)[0], 200);
+        let foreground = cropped.foreground().expect("foreground should compose");
+        assert_eq!(foreground.image().get_pixel(0, 0)[0], 3);
+        assert_eq!(foreground.image().get_pixel(0, 0)[1], 1);
+        assert_eq!(foreground.image().get_pixel(0, 0)[3], 200);
     }
 
     #[test]
