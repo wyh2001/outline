@@ -4,14 +4,14 @@ use std::sync::Arc;
 
 use image::{GrayImage, RgbImage, RgbaImage};
 
-use crate::config::{ErosionBorderMode, MaskProcessingOptions};
+use crate::config::{ErosionBorderMode, MaskProcessingDefaults};
 use crate::foreground::{ForegroundHandle, compose_foreground};
 use crate::geometry::{
     BoundingBox, Padding, crop_bounds_fit_image, crop_gray_image, crop_rgb_image,
     mask_bounding_box, pad_gray_image, pad_rgb_image,
 };
 use crate::mask::{
-    MaskColor, MaskHandle, MaskOperation, apply_operations, colorize_mask, operations_from_options,
+    MaskColor, MaskHandle, MaskOperation, MaskPipeline, apply_operations, colorize_mask,
 };
 use crate::{MaskVectorizer, OutlineResult};
 
@@ -40,19 +40,19 @@ use crate::{MaskVectorizer, OutlineResult};
 pub struct InferencedMatte {
     rgb_image: Arc<RgbImage>,
     raw_matte: Arc<GrayImage>,
-    default_mask_processing: MaskProcessingOptions,
+    mask_processing_defaults: MaskProcessingDefaults,
 }
 
 impl InferencedMatte {
     pub(crate) fn new(
         rgb_image: RgbImage,
         raw_matte: GrayImage,
-        default_mask_processing: MaskProcessingOptions,
+        mask_processing_defaults: MaskProcessingDefaults,
     ) -> Self {
         Self {
             rgb_image: Arc::new(rgb_image),
             raw_matte: Arc::new(raw_matte),
-            default_mask_processing,
+            mask_processing_defaults,
         }
     }
 
@@ -71,7 +71,7 @@ impl InferencedMatte {
         MatteHandle {
             rgb_image: Arc::clone(&self.rgb_image),
             raw_matte: Arc::clone(&self.raw_matte),
-            default_mask_processing: self.default_mask_processing.clone(),
+            mask_processing_defaults: self.mask_processing_defaults.clone(),
             operations: Vec::new(),
         }
     }
@@ -102,7 +102,7 @@ impl InferencedMatte {
 pub struct MatteHandle {
     rgb_image: Arc<RgbImage>,
     raw_matte: Arc<GrayImage>,
-    default_mask_processing: MaskProcessingOptions,
+    mask_processing_defaults: MaskProcessingDefaults,
     operations: Vec<MaskOperation>,
 }
 
@@ -125,7 +125,7 @@ impl MatteHandle {
         Self {
             rgb_image: self.rgb_image,
             raw_matte: Arc::new(matte),
-            default_mask_processing: self.default_mask_processing,
+            mask_processing_defaults: self.mask_processing_defaults,
             operations: Vec::new(),
         }
     }
@@ -179,7 +179,7 @@ impl MatteHandle {
 
     /// Add a blur operation using the default sigma.
     pub fn blur(mut self) -> Self {
-        let sigma = self.default_mask_processing.blur_sigma;
+        let sigma = self.mask_processing_defaults.blur_sigma;
         self.operations.push(MaskOperation::Blur { sigma });
         self
     }
@@ -192,7 +192,7 @@ impl MatteHandle {
 
     /// Add a threshold operation using the default mask threshold.
     pub fn threshold(mut self) -> Self {
-        let value = self.default_mask_processing.mask_threshold;
+        let value = self.mask_processing_defaults.mask_threshold;
         self.operations.push(MaskOperation::Threshold { value });
         self
     }
@@ -208,7 +208,7 @@ impl MatteHandle {
     /// **Note**: Dilation typically works best on binary masks. Consider calling
     /// [`threshold`](MatteHandle::threshold) before `dilate` if working with a soft matte.
     pub fn dilate(mut self) -> Self {
-        let radius = self.default_mask_processing.dilation_radius;
+        let radius = self.mask_processing_defaults.dilation_radius;
         self.operations.push(MaskOperation::Dilate { radius });
         self
     }
@@ -227,8 +227,8 @@ impl MatteHandle {
     /// **Note**: Erosion typically works best on binary masks. Consider calling
     /// [`threshold`](MatteHandle::threshold) before `erode` if working with a soft matte.
     pub fn erode(mut self) -> Self {
-        let radius = self.default_mask_processing.erosion_radius;
-        let border_mode = self.default_mask_processing.erosion_border_mode;
+        let radius = self.mask_processing_defaults.erosion_radius;
+        let border_mode = self.mask_processing_defaults.erosion_border_mode;
         self.operations.push(MaskOperation::Erode {
             radius,
             border_mode,
@@ -241,7 +241,7 @@ impl MatteHandle {
     /// **Note**: Erosion typically works best on binary masks. Consider calling
     /// [`threshold`](MatteHandle::threshold) before `erode` if working with a soft matte.
     pub fn erode_with(mut self, radius: f32) -> Self {
-        let border_mode = self.default_mask_processing.erosion_border_mode;
+        let border_mode = self.mask_processing_defaults.erosion_border_mode;
         self.operations.push(MaskOperation::Erode {
             radius,
             border_mode,
@@ -265,40 +265,44 @@ impl MatteHandle {
     ///
     /// **Note**: Hole-filling typically works best on binary masks. Consider calling
     /// [`threshold`](MatteHandle::threshold) before `fill_holes` if working with a soft matte.
-    pub fn fill_holes(mut self) -> Self {
-        let threshold = self.default_mask_processing.mask_threshold;
+    pub fn fill_holes(self) -> Self {
+        let threshold = self.mask_processing_defaults.mask_threshold;
+        self.fill_holes_with(threshold)
+    }
+
+    /// Add a hole-filling operation with a custom threshold.
+    ///
+    /// **Note**: Hole-filling typically works best on binary masks. Consider calling
+    /// [`threshold`](MatteHandle::threshold) before `fill_holes` if working with a soft matte.
+    pub fn fill_holes_with(mut self, threshold: u8) -> Self {
         self.operations.push(MaskOperation::FillHoles { threshold });
         self
     }
 
-    /// Process the raw matte with the accumulated operations and default options.
+    /// Process the raw matte with the accumulated operations.
     pub fn processed(self) -> OutlineResult<MaskHandle> {
-        self.process_with_options(None)
+        self.process_with_pipeline(None)
     }
 
-    /// Process the raw matte with the accumulated operations and custom options.
-    pub fn processed_with(self, options: &MaskProcessingOptions) -> OutlineResult<MaskHandle> {
-        self.process_with_options(Some(options))
+    /// Process the raw matte with the accumulated operations and a custom pipeline.
+    pub fn processed_with(self, pipeline: &MaskPipeline) -> OutlineResult<MaskHandle> {
+        self.process_with_pipeline(Some(pipeline))
     }
 
-    fn process_with_options(
+    fn process_with_pipeline(
         mut self,
-        options: Option<&MaskProcessingOptions>,
+        pipeline: Option<&MaskPipeline>,
     ) -> OutlineResult<MaskHandle> {
         let mut ops = std::mem::take(&mut self.operations);
-        match options {
-            Some(custom) => ops.extend(operations_from_options(custom)),
-            None if ops.is_empty() => {
-                ops.extend(operations_from_options(&self.default_mask_processing))
-            }
-            None => {}
+        if let Some(custom) = pipeline {
+            ops.extend_from_slice(custom.operations());
         }
 
         let mask = apply_operations(self.raw_matte.as_ref(), &ops);
         Ok(MaskHandle::new(
             Arc::clone(&self.rgb_image),
             mask,
-            self.default_mask_processing,
+            self.mask_processing_defaults,
         ))
     }
 
@@ -337,7 +341,7 @@ impl MatteHandle {
         Self {
             rgb_image: rgb,
             raw_matte: matte,
-            default_mask_processing: this.default_mask_processing,
+            mask_processing_defaults: this.mask_processing_defaults,
             operations: Vec::new(),
         }
     }
@@ -356,7 +360,7 @@ impl MatteHandle {
         Some(Self {
             rgb_image: rgb,
             raw_matte: matte,
-            default_mask_processing: this.default_mask_processing,
+            mask_processing_defaults: this.mask_processing_defaults,
             operations: Vec::new(),
         })
     }
@@ -387,7 +391,7 @@ mod tests {
         MatteHandle {
             rgb_image: Arc::new(RgbImage::from_pixel(1, 1, Rgb([255, 255, 255]))),
             raw_matte: Arc::new(GrayImage::from_pixel(1, 1, Luma([255]))),
-            default_mask_processing: MaskProcessingOptions::default(),
+            mask_processing_defaults: MaskProcessingDefaults::default(),
             operations: Vec::new(),
         }
     }
@@ -402,7 +406,7 @@ mod tests {
                     Luma([0])
                 }
             })),
-            default_mask_processing: MaskProcessingOptions::default(),
+            mask_processing_defaults: MaskProcessingDefaults::default(),
             operations: Vec::new(),
         }
     }
@@ -411,7 +415,7 @@ mod tests {
         MatteHandle {
             rgb_image: Arc::new(rgb_image),
             raw_matte: Arc::new(raw_matte),
-            default_mask_processing: MaskProcessingOptions::default(),
+            mask_processing_defaults: MaskProcessingDefaults::default(),
             operations: Vec::new(),
         }
     }
@@ -460,8 +464,8 @@ mod tests {
         assert!(matches!(
             handle.operations.as_slice(),
             [MaskOperation::Erode { radius, border_mode }]
-                if (*radius - MaskProcessingOptions::default().erosion_radius).abs() < f32::EPSILON
-                    && *border_mode == MaskProcessingOptions::default().erosion_border_mode
+                if (*radius - MaskProcessingDefaults::default().erosion_radius).abs() < f32::EPSILON
+                    && *border_mode == MaskProcessingDefaults::default().erosion_border_mode
         ));
     }
 
@@ -472,7 +476,7 @@ mod tests {
             handle.operations.as_slice(),
             [MaskOperation::Erode { radius, border_mode }]
                 if (*radius - 2.5).abs() < f32::EPSILON
-                    && *border_mode == MaskProcessingOptions::default().erosion_border_mode
+                    && *border_mode == MaskProcessingDefaults::default().erosion_border_mode
         ));
     }
 
@@ -486,6 +490,55 @@ mod tests {
                 if (*radius - 2.5).abs() < f32::EPSILON
                     && *border_mode == ErosionBorderMode::OutsideIsUnknown
         ));
+    }
+
+    #[test]
+    fn matte_handle_fill_holes_with_uses_custom_threshold() {
+        let handle = matte_handle().fill_holes_with(180);
+        assert!(matches!(
+            handle.operations.as_slice(),
+            [MaskOperation::FillHoles { threshold: 180 }]
+        ));
+    }
+
+    #[test]
+    fn matte_handle_chain_and_pipeline_are_equivalent() {
+        let pipeline = MaskPipeline::new()
+            .threshold_with(128)
+            .dilate_with(1.0)
+            .erode_with(1.0);
+
+        let chained = single_pixel_matte_handle()
+            .threshold_with(128)
+            .dilate_with(1.0)
+            .erode_with(1.0)
+            .processed()
+            .expect("chain should process")
+            .into_image();
+        let piped = single_pixel_matte_handle()
+            .processed_with(&pipeline)
+            .expect("pipeline should process")
+            .into_image();
+
+        assert_eq!(chained.as_raw(), piped.as_raw());
+    }
+
+    #[test]
+    fn matte_handle_processed_without_chained_operations_is_identity() {
+        let source = single_pixel_matte_handle().into_image();
+        let handle = MatteHandle {
+            rgb_image: Arc::new(RgbImage::from_pixel(5, 5, Rgb([10, 20, 30]))),
+            raw_matte: Arc::new(source.clone()),
+            mask_processing_defaults: MaskProcessingDefaults::default(),
+            operations: Vec::new(),
+        };
+
+        let mask = handle
+            .processed()
+            .expect("empty processing should succeed")
+            .into_image();
+
+        assert_eq!(mask.as_raw(), source.as_raw());
     }
 
     #[test]

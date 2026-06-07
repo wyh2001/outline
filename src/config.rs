@@ -71,60 +71,36 @@ pub enum ErosionBorderMode {
     OutsideIsUnknown,
 }
 
-/// Configuration for mask post-processing operations.
+/// Default parameters used by no-argument mask processing methods.
 ///
-/// Defines the pipeline of blur, threshold, dilation, erosion, and hole-filling operations applied
-/// to raw mattes. Used as defaults in [`Outline`](crate::Outline) and can be overridden
-/// per operation via [`MatteHandle`](crate::MatteHandle) and [`MaskHandle`](crate::MaskHandle).
+/// This does not define which operations run. Use [`MaskPipeline`](crate::MaskPipeline) or the
+/// chained methods on [`MatteHandle`](crate::MatteHandle) and [`MaskHandle`](crate::MaskHandle)
+/// to choose an explicit operation order.
 ///
-/// # Explicit Configuration
-///
-/// This struct does **not** apply automatic logic. For example, setting `dilate = true`,
-/// `erode = true`, or `fill_holes = true` will **not** automatically enable `binary`. If you
-/// need a binary mask for dilation, erosion, or hole-filling to work meaningfully, you must
-/// explicitly set `binary = true` or call [`threshold`](crate::MatteHandle::threshold) in your
-/// processing chain.
-///
-/// **Note**: The CLI's `--binary auto` mode *does* automatically enable thresholding when
-/// `--dilate`, `--erode`, or `--fill-holes` is specified. The library leaves this decision to
-/// you for maximum control and predictability.
+/// This struct is non-exhaustive; start with [`Default`] and then adjust fields as needed.
 #[derive(Debug, Clone, PartialEq)]
-pub struct MaskProcessingOptions {
-    /// Whether to apply binary thresholding to the mask.
-    pub binary: bool,
-    /// Whether to apply Gaussian blur to the mask.
-    pub blur: bool,
+#[non_exhaustive]
+pub struct MaskProcessingDefaults {
     /// Standard deviation (sigma) for Gaussian blur.
     pub blur_sigma: f32,
     /// Threshold value (0–255) used for binary conversion and hole-filling.
     pub mask_threshold: u8,
-    /// Whether to dilate the mask using a Euclidean distance transform.
-    pub dilate: bool,
     /// Radius in pixels for the dilation operation.
     pub dilation_radius: f32,
-    /// Whether to erode the mask using a Euclidean distance transform.
-    pub erode: bool,
     /// Radius in pixels for the erosion operation.
     pub erosion_radius: f32,
     /// How erosion treats pixels outside the image bounds.
     pub erosion_border_mode: ErosionBorderMode,
-    /// Whether to fill interior holes in the binary mask.
-    pub fill_holes: bool,
 }
 
-impl Default for MaskProcessingOptions {
+impl Default for MaskProcessingDefaults {
     fn default() -> Self {
         Self {
-            binary: false,
-            blur: false,
             blur_sigma: 6.0,
             mask_threshold: 120,
-            dilate: false,
             dilation_radius: 5.0,
-            erode: false,
             erosion_radius: 5.0,
             erosion_border_mode: ErosionBorderMode::default(),
-            fill_holes: false,
         }
     }
 }

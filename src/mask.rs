@@ -11,7 +11,7 @@ use ndarray::Array2;
 
 use crate::MaskVectorizer;
 use crate::OutlineResult;
-use crate::config::{ErosionBorderMode, MaskProcessingOptions};
+use crate::config::{ErosionBorderMode, MaskProcessingDefaults};
 use crate::foreground::{ForegroundHandle, compose_foreground};
 use crate::geometry::{
     BoundingBox, Padding, crop_bounds_fit_image, crop_gray_image, crop_rgb_image,
@@ -22,7 +22,8 @@ use crate::geometry::{
 use vtracer::ColorImage;
 
 /// A single transformation step applied to a grayscale mask image.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum MaskOperation {
     Blur {
         sigma: f32,
@@ -66,36 +67,65 @@ pub fn apply_operations(source: &GrayImage, operations: &[MaskOperation]) -> Gra
     current
 }
 
-/// Produce a standard operation sequence based on simple mask processing options.
-pub fn operations_from_options(options: &MaskProcessingOptions) -> Vec<MaskOperation> {
-    let mut operations = Vec::new();
-    if options.blur {
-        operations.push(MaskOperation::Blur {
-            sigma: options.blur_sigma,
-        });
+/// An ordered mask processing pipeline.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct MaskPipeline {
+    operations: Vec<MaskOperation>,
+}
+
+impl MaskPipeline {
+    /// Create an empty mask pipeline.
+    pub fn new() -> Self {
+        Self::default()
     }
-    if options.binary {
-        operations.push(MaskOperation::Threshold {
-            value: options.mask_threshold,
-        });
+
+    /// Return whether the pipeline has no operations.
+    pub fn is_empty(&self) -> bool {
+        self.operations.is_empty()
     }
-    if options.dilate {
-        operations.push(MaskOperation::Dilate {
-            radius: options.dilation_radius,
-        });
+
+    /// Return the ordered operations in this pipeline.
+    pub fn operations(&self) -> &[MaskOperation] {
+        &self.operations
     }
-    if options.erode {
-        operations.push(MaskOperation::Erode {
-            radius: options.erosion_radius,
-            border_mode: options.erosion_border_mode,
-        });
+
+    /// Add a blur operation with a custom sigma.
+    pub fn blur_with(mut self, sigma: f32) -> Self {
+        self.operations.push(MaskOperation::Blur { sigma });
+        self
     }
-    if options.fill_holes {
-        operations.push(MaskOperation::FillHoles {
-            threshold: options.mask_threshold,
-        });
+
+    /// Add a threshold operation with a custom value.
+    pub fn threshold_with(mut self, value: u8) -> Self {
+        self.operations.push(MaskOperation::Threshold { value });
+        self
     }
-    operations
+
+    /// Add a dilation operation with a custom radius.
+    pub fn dilate_with(mut self, radius: f32) -> Self {
+        self.operations.push(MaskOperation::Dilate { radius });
+        self
+    }
+
+    /// Add an erosion operation with the default boundary behavior.
+    pub fn erode_with(self, radius: f32) -> Self {
+        self.erode_with_border_mode(radius, ErosionBorderMode::default())
+    }
+
+    /// Add an erosion operation with a custom radius and boundary behavior.
+    pub fn erode_with_border_mode(mut self, radius: f32, border_mode: ErosionBorderMode) -> Self {
+        self.operations.push(MaskOperation::Erode {
+            radius,
+            border_mode,
+        });
+        self
+    }
+
+    /// Add a hole-filling operation with a custom threshold.
+    pub fn fill_holes_with(mut self, threshold: u8) -> Self {
+        self.operations.push(MaskOperation::FillHoles { threshold });
+        self
+    }
 }
 
 /// Convert a 2D array of f32 values in [0.0, 1.0] to a grayscale image.
@@ -450,7 +480,7 @@ pub fn colorize_mask(mask: &GrayImage, color: impl Into<MaskColor>) -> RgbaImage
 pub struct MaskHandle {
     rgb_image: Arc<RgbImage>,
     mask: GrayImage,
-    default_mask_processing: MaskProcessingOptions,
+    mask_processing_defaults: MaskProcessingDefaults,
     operations: Vec<MaskOperation>,
 }
 
@@ -458,12 +488,12 @@ impl MaskHandle {
     pub(crate) fn new(
         rgb_image: Arc<RgbImage>,
         mask: GrayImage,
-        default_mask_processing: MaskProcessingOptions,
+        mask_processing_defaults: MaskProcessingDefaults,
     ) -> Self {
         Self {
             rgb_image,
             mask,
-            default_mask_processing,
+            mask_processing_defaults,
             operations: Vec::new(),
         }
     }
@@ -475,7 +505,7 @@ impl MaskHandle {
 
         let operations = std::mem::take(&mut self.operations);
         let mask = apply_operations(&self.mask, &operations);
-        Self::new(self.rgb_image, mask, self.default_mask_processing)
+        Self::new(self.rgb_image, mask, self.mask_processing_defaults)
     }
 
     fn resolved_mask(&self) -> Cow<'_, GrayImage> {
@@ -537,7 +567,7 @@ impl MaskHandle {
 
     /// Add a blur operation using the default sigma.
     pub fn blur(mut self) -> Self {
-        let sigma = self.default_mask_processing.blur_sigma;
+        let sigma = self.mask_processing_defaults.blur_sigma;
         self.operations.push(MaskOperation::Blur { sigma });
         self
     }
@@ -550,7 +580,7 @@ impl MaskHandle {
 
     /// Add a threshold operation using the default mask threshold.
     pub fn threshold(mut self) -> Self {
-        let value = self.default_mask_processing.mask_threshold;
+        let value = self.mask_processing_defaults.mask_threshold;
         self.operations.push(MaskOperation::Threshold { value });
         self
     }
@@ -566,7 +596,7 @@ impl MaskHandle {
     /// **Note**: Dilation typically works best on binary masks. If this mask is still grayscale,
     /// consider calling [`threshold`](MaskHandle::threshold) first.
     pub fn dilate(mut self) -> Self {
-        let radius = self.default_mask_processing.dilation_radius;
+        let radius = self.mask_processing_defaults.dilation_radius;
         self.operations.push(MaskOperation::Dilate { radius });
         self
     }
@@ -585,8 +615,8 @@ impl MaskHandle {
     /// **Note**: Erosion typically works best on binary masks. If this mask is still grayscale,
     /// consider calling [`threshold`](MaskHandle::threshold) first.
     pub fn erode(mut self) -> Self {
-        let radius = self.default_mask_processing.erosion_radius;
-        let border_mode = self.default_mask_processing.erosion_border_mode;
+        let radius = self.mask_processing_defaults.erosion_radius;
+        let border_mode = self.mask_processing_defaults.erosion_border_mode;
         self.operations.push(MaskOperation::Erode {
             radius,
             border_mode,
@@ -599,7 +629,7 @@ impl MaskHandle {
     /// **Note**: Erosion typically works best on binary masks. If this mask is still grayscale,
     /// consider calling [`threshold`](MaskHandle::threshold) first.
     pub fn erode_with(mut self, radius: f32) -> Self {
-        let border_mode = self.default_mask_processing.erosion_border_mode;
+        let border_mode = self.mask_processing_defaults.erosion_border_mode;
         self.operations.push(MaskOperation::Erode {
             radius,
             border_mode,
@@ -623,40 +653,44 @@ impl MaskHandle {
     ///
     /// **Note**: Hole-filling typically works best on binary masks. If this mask is still grayscale,
     /// consider calling [`threshold`](MaskHandle::threshold) first.
-    pub fn fill_holes(mut self) -> Self {
-        let threshold = self.default_mask_processing.mask_threshold;
+    pub fn fill_holes(self) -> Self {
+        let threshold = self.mask_processing_defaults.mask_threshold;
+        self.fill_holes_with(threshold)
+    }
+
+    /// Add a hole-filling operation with a custom threshold.
+    ///
+    /// **Note**: Hole-filling typically works best on binary masks. If this mask is still grayscale,
+    /// consider calling [`threshold`](MaskHandle::threshold) first.
+    pub fn fill_holes_with(mut self, threshold: u8) -> Self {
         self.operations.push(MaskOperation::FillHoles { threshold });
         self
     }
 
-    /// Process the mask with the accumulated operations and default options.
+    /// Process the mask with the accumulated operations.
     pub fn processed(self) -> OutlineResult<MaskHandle> {
-        self.process_with_options(None)
+        self.process_with_pipeline(None)
     }
 
-    /// Process the mask with the accumulated operations and custom options.
-    pub fn processed_with(self, options: &MaskProcessingOptions) -> OutlineResult<MaskHandle> {
-        self.process_with_options(Some(options))
+    /// Process the mask with the accumulated operations and a custom pipeline.
+    pub fn processed_with(self, pipeline: &MaskPipeline) -> OutlineResult<MaskHandle> {
+        self.process_with_pipeline(Some(pipeline))
     }
 
-    fn process_with_options(
+    fn process_with_pipeline(
         mut self,
-        options: Option<&MaskProcessingOptions>,
+        pipeline: Option<&MaskPipeline>,
     ) -> OutlineResult<MaskHandle> {
         let mut ops = std::mem::take(&mut self.operations);
-        match options {
-            Some(custom) => ops.extend(operations_from_options(custom)),
-            None if ops.is_empty() => {
-                ops.extend(operations_from_options(&self.default_mask_processing))
-            }
-            None => {}
+        if let Some(custom) = pipeline {
+            ops.extend_from_slice(custom.operations());
         }
 
         let mask = apply_operations(&self.mask, &ops);
         Ok(MaskHandle::new(
             self.rgb_image,
             mask,
-            self.default_mask_processing,
+            self.mask_processing_defaults,
         ))
     }
 
@@ -692,7 +726,7 @@ impl MaskHandle {
         let padding = padding.into();
         let mask = pad_gray_image(&this.mask, padding, 0);
         let rgb = Arc::new(pad_rgb_image(this.rgb_image.as_ref(), padding, [0, 0, 0]));
-        Self::new(rgb, mask, this.default_mask_processing)
+        Self::new(rgb, mask, this.mask_processing_defaults)
     }
 
     /// Crop the mask and source RGB image to `bounds`.
@@ -706,7 +740,7 @@ impl MaskHandle {
 
         let mask = crop_gray_image(&this.mask, bounds);
         let rgb = Arc::new(crop_rgb_image(this.rgb_image.as_ref(), bounds));
-        Some(Self::new(rgb, mask, this.default_mask_processing))
+        Some(Self::new(rgb, mask, this.mask_processing_defaults))
     }
 
     /// Crop the mask and source RGB image to the smallest non-zero content box.
@@ -1445,6 +1479,26 @@ mod tests {
                 // fallback: overall results must differ
                 assert_ne!(result_blur_first.as_raw(), result_threshold_first.as_raw());
             }
+
+            #[test]
+            fn order_matters_dilate_vs_blur() {
+                let mut input = gray_image(5, 5, 0);
+                input.put_pixel(2, 2, Luma([255]));
+
+                let ops_dilate_first = vec![
+                    MaskOperation::Dilate { radius: 1.0 },
+                    MaskOperation::Blur { sigma: 1.0 },
+                ];
+                let result_dilate_first = apply_operations(&input, &ops_dilate_first);
+
+                let ops_blur_first = vec![
+                    MaskOperation::Blur { sigma: 1.0 },
+                    MaskOperation::Dilate { radius: 1.0 },
+                ];
+                let result_blur_first = apply_operations(&input, &ops_blur_first);
+
+                assert_ne!(result_dilate_first.as_raw(), result_blur_first.as_raw());
+            }
         }
 
         mod prop {
@@ -1489,34 +1543,25 @@ mod tests {
         }
     }
 
-    mod operations_from_options {
+    mod mask_pipeline {
         use super::*;
 
         mod unit {
             use super::*;
 
             #[test]
-            fn all_disabled_returns_empty() {
-                let opts = MaskProcessingOptions {
-                    blur: false,
-                    binary: false,
-                    dilate: false,
-                    erode: false,
-                    fill_holes: false,
-                    ..Default::default()
-                };
-                let ops = operations_from_options(&opts);
-                assert!(ops.is_empty());
+            fn new_returns_empty() {
+                let pipeline = MaskPipeline::new();
+
+                assert!(pipeline.is_empty());
+                assert!(pipeline.operations().is_empty());
             }
 
             #[test]
-            fn blur_only() {
-                let opts = MaskProcessingOptions {
-                    blur: true,
-                    blur_sigma: 3.0,
-                    ..Default::default()
-                };
-                let ops = operations_from_options(&opts);
+            fn blur_with_adds_blur_operation() {
+                let pipeline = MaskPipeline::new().blur_with(3.0);
+                let ops = pipeline.operations();
+
                 assert_eq!(ops.len(), 1);
                 assert!(
                     matches!(ops[0], MaskOperation::Blur { sigma } if (sigma - 3.0).abs() < 0.001)
@@ -1525,20 +1570,14 @@ mod tests {
 
             #[test]
             fn full_pipeline_order_and_values() {
-                // order: blur, threshold, dilate, erode, fill_holes
-                let opts = MaskProcessingOptions {
-                    blur: true,
-                    blur_sigma: 2.0,
-                    binary: true,
-                    mask_threshold: 128,
-                    dilate: true,
-                    dilation_radius: 5.0,
-                    erode: true,
-                    erosion_radius: 3.0,
-                    erosion_border_mode: ErosionBorderMode::OutsideIsUnknown,
-                    fill_holes: true,
-                };
-                let ops = operations_from_options(&opts);
+                let pipeline = MaskPipeline::new()
+                    .blur_with(2.0)
+                    .threshold_with(128)
+                    .dilate_with(5.0)
+                    .erode_with_border_mode(3.0, ErosionBorderMode::OutsideIsUnknown)
+                    .fill_holes_with(128);
+                let ops = pipeline.operations();
+
                 assert_eq!(ops.len(), 5);
                 assert!(
                     matches!(ops[0], MaskOperation::Blur { sigma } if (sigma - 2.0).abs() < 1e-6)
@@ -1560,17 +1599,10 @@ mod tests {
             }
 
             #[test]
-            fn partial_pipeline_skips_disabled() {
-                let opts = MaskProcessingOptions {
-                    blur: false,
-                    binary: true,
-                    mask_threshold: 100,
-                    dilate: false,
-                    erode: false,
-                    fill_holes: true,
-                    ..Default::default()
-                };
-                let ops = operations_from_options(&opts);
+            fn partial_pipeline_keeps_inserted_order() {
+                let pipeline = MaskPipeline::new().threshold_with(100).fill_holes_with(100);
+                let ops = pipeline.operations();
+
                 assert_eq!(ops.len(), 2);
                 assert!(matches!(ops[0], MaskOperation::Threshold { value: 100 }));
                 assert!(matches!(
@@ -1589,7 +1621,7 @@ mod tests {
             MaskHandle {
                 rgb_image: Arc::new(RgbImage::from_pixel(1, 1, Rgb([255, 255, 255]))),
                 mask: GrayImage::from_pixel(1, 1, Luma([255])),
-                default_mask_processing: MaskProcessingOptions::default(),
+                mask_processing_defaults: MaskProcessingDefaults::default(),
                 operations: Vec::new(),
             }
         }
@@ -1598,7 +1630,7 @@ mod tests {
             MaskHandle {
                 rgb_image: Arc::new(rgb),
                 mask,
-                default_mask_processing: MaskProcessingOptions::default(),
+                mask_processing_defaults: MaskProcessingDefaults::default(),
                 operations: Vec::new(),
             }
         }
@@ -1731,8 +1763,8 @@ mod tests {
                 assert!(matches!(
                     handle.operations.as_slice(),
                     [MaskOperation::Erode { radius, border_mode }]
-                        if (*radius - MaskProcessingOptions::default().erosion_radius).abs() < f32::EPSILON
-                            && *border_mode == MaskProcessingOptions::default().erosion_border_mode
+                        if (*radius - MaskProcessingDefaults::default().erosion_radius).abs() < f32::EPSILON
+                            && *border_mode == MaskProcessingDefaults::default().erosion_border_mode
                 ));
             }
 
@@ -1743,7 +1775,7 @@ mod tests {
                     handle.operations.as_slice(),
                     [MaskOperation::Erode { radius, border_mode }]
                         if (*radius - 3.0).abs() < f32::EPSILON
-                            && *border_mode == MaskProcessingOptions::default().erosion_border_mode
+                            && *border_mode == MaskProcessingDefaults::default().erosion_border_mode
                 ));
             }
 
@@ -1756,6 +1788,120 @@ mod tests {
                     [MaskOperation::Erode { radius, border_mode }]
                         if (*radius - 3.0).abs() < f32::EPSILON
                             && *border_mode == ErosionBorderMode::OutsideIsUnknown
+                ));
+            }
+        }
+
+        mod fill_holes_builder {
+            use super::*;
+
+            #[test]
+            fn mask_handle_fill_holes_with_uses_custom_threshold() {
+                let handle = mask_handle().fill_holes_with(180);
+                assert!(matches!(
+                    handle.operations.as_slice(),
+                    [MaskOperation::FillHoles { threshold: 180 }]
+                ));
+            }
+        }
+
+        mod processing_pipeline {
+            use super::*;
+
+            #[test]
+            fn chain_and_pipeline_are_equivalent() {
+                let pipeline = MaskPipeline::new()
+                    .threshold_with(128)
+                    .dilate_with(1.0)
+                    .erode_with(1.0);
+
+                let chained = single_pixel_mask_handle()
+                    .threshold_with(128)
+                    .dilate_with(1.0)
+                    .erode_with(1.0)
+                    .processed()
+                    .expect("chain should process")
+                    .into_image();
+                let piped = single_pixel_mask_handle()
+                    .processed_with(&pipeline)
+                    .expect("pipeline should process")
+                    .into_image();
+
+                assert_eq!(chained.as_raw(), piped.as_raw());
+            }
+
+            #[test]
+            fn processed_with_appends_after_chained_operations() {
+                let pipeline = MaskPipeline::new().dilate_with(1.0);
+
+                let appended = single_pixel_mask_handle()
+                    .threshold_with(128)
+                    .processed_with(&pipeline)
+                    .expect("processing should succeed")
+                    .into_image();
+                let chained = single_pixel_mask_handle()
+                    .threshold_with(128)
+                    .dilate_with(1.0)
+                    .processed()
+                    .expect("processing should succeed")
+                    .into_image();
+
+                assert_eq!(appended.as_raw(), chained.as_raw());
+            }
+
+            #[test]
+            fn processed_without_chained_operations_is_identity() {
+                let source = single_pixel_mask_handle().into_image();
+                let handle = MaskHandle {
+                    rgb_image: Arc::new(RgbImage::from_pixel(5, 5, Rgb([10, 20, 30]))),
+                    mask: source.clone(),
+                    mask_processing_defaults: MaskProcessingDefaults::default(),
+                    operations: Vec::new(),
+                };
+
+                let mask = handle
+                    .processed()
+                    .expect("empty processing should succeed")
+                    .into_image();
+
+                assert_eq!(mask.as_raw(), source.as_raw());
+            }
+
+            #[test]
+            fn no_arg_methods_use_custom_defaults() {
+                let defaults = MaskProcessingDefaults {
+                    blur_sigma: 2.0,
+                    mask_threshold: 180,
+                    dilation_radius: 3.0,
+                    erosion_radius: 4.0,
+                    erosion_border_mode: ErosionBorderMode::OutsideIsUnknown,
+                };
+                let handle = MaskHandle {
+                    rgb_image: Arc::new(RgbImage::from_pixel(1, 1, Rgb([255, 255, 255]))),
+                    mask: GrayImage::from_pixel(1, 1, Luma([255])),
+                    mask_processing_defaults: defaults,
+                    operations: Vec::new(),
+                }
+                .blur()
+                .threshold()
+                .dilate()
+                .erode()
+                .fill_holes();
+
+                assert!(matches!(
+                    handle.operations.as_slice(),
+                    [
+                        MaskOperation::Blur { sigma },
+                        MaskOperation::Threshold { value: 180 },
+                        MaskOperation::Dilate { radius: dilation_radius },
+                        MaskOperation::Erode {
+                            radius: erosion_radius,
+                            border_mode: ErosionBorderMode::OutsideIsUnknown
+                        },
+                        MaskOperation::FillHoles { threshold: 180 }
+                    ] if (*sigma - 2.0).abs() < f32::EPSILON
+                        && (*dilation_radius - 3.0).abs() < f32::EPSILON
+                        && (*erosion_radius - 4.0).abs() < f32::EPSILON
                 ));
             }
         }

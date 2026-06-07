@@ -65,7 +65,8 @@ mod vectorizer;
 
 #[doc(inline)]
 pub use crate::config::{
-    DEFAULT_MODEL_PATH, ENV_MODEL_PATH, ErosionBorderMode, InferenceSettings, MaskProcessingOptions,
+    DEFAULT_MODEL_PATH, ENV_MODEL_PATH, ErosionBorderMode, InferenceSettings,
+    MaskProcessingDefaults,
 };
 #[doc(inline)]
 pub use crate::error::{OutlineError, OutlineResult};
@@ -74,7 +75,9 @@ pub use crate::foreground::ForegroundHandle;
 #[doc(inline)]
 pub use crate::geometry::{BoundingBox, Padding};
 #[doc(inline)]
-pub use crate::mask::{MaskAlphaMode, MaskColor, MaskHandle, colorize_mask};
+pub use crate::mask::{
+    MaskAlphaMode, MaskColor, MaskHandle, MaskOperation, MaskPipeline, colorize_mask,
+};
 #[doc(inline)]
 pub use crate::matte::{InferencedMatte, MatteHandle};
 pub use vectorizer::MaskVectorizer;
@@ -95,16 +98,16 @@ use crate::inference::{CachedInferenceSession, load_rgb_from_memory_with_orienta
 /// Entry point for configuring and running background matting inference.
 ///
 /// This is the main interface for loading an ONNX model and processing images to extract
-/// foreground subjects. Configure model path, inference settings, and default mask processing
-/// options, then call [`for_image`](Outline::for_image) to run inference on individual images.
+/// foreground subjects. Configure model path, inference settings, and optional default mask
+/// processing, then call [`for_image`](Outline::for_image) to run inference on individual images.
 ///
 /// Each `Outline` instance lazily initializes and reuses its ONNX Runtime session.
 #[derive(Debug)]
 pub struct Outline {
     /// Inference settings for model and image handling.
     settings: InferenceSettings,
-    /// If nothing is specified and processing is requested, these options will be used.
-    default_mask_processing: MaskProcessingOptions,
+    /// Default parameter values for no-argument mask processing methods.
+    mask_processing_defaults: MaskProcessingDefaults,
     /// Lazily initialized cached session for this configured model.
     cached_session: Mutex<Option<Arc<CachedInferenceSession>>>,
 }
@@ -113,7 +116,7 @@ impl Clone for Outline {
     fn clone(&self) -> Self {
         Self {
             settings: self.settings.clone(),
-            default_mask_processing: self.default_mask_processing.clone(),
+            mask_processing_defaults: self.mask_processing_defaults.clone(),
             cached_session: Mutex::new(None),
         }
     }
@@ -124,7 +127,7 @@ impl Outline {
     pub fn new(model_path: impl Into<PathBuf>) -> Self {
         Self {
             settings: InferenceSettings::new(model_path),
-            default_mask_processing: MaskProcessingOptions::default(),
+            mask_processing_defaults: MaskProcessingDefaults::default(),
             cached_session: Mutex::new(None),
         }
     }
@@ -172,15 +175,15 @@ impl Outline {
         self
     }
 
-    /// Set the default mask processing options to use when none are specified.
-    pub fn with_default_mask_processing(mut self, options: MaskProcessingOptions) -> Self {
-        self.default_mask_processing = options;
+    /// Set the default parameter values for no-argument mask processing methods.
+    pub fn with_mask_processing_defaults(mut self, defaults: MaskProcessingDefaults) -> Self {
+        self.mask_processing_defaults = defaults;
         self
     }
 
-    /// Get a reference to the default mask processing options.
-    pub fn default_mask_processing(&self) -> &MaskProcessingOptions {
-        &self.default_mask_processing
+    /// Get the default parameter values for no-argument mask processing methods.
+    pub fn mask_processing_defaults(&self) -> &MaskProcessingDefaults {
+        &self.mask_processing_defaults
     }
 
     fn get_or_init_cached_session(&self) -> OutlineResult<Arc<CachedInferenceSession>> {
@@ -198,7 +201,7 @@ impl Outline {
         Ok(session)
     }
 
-    /// Run the inference pipeline for a single image, returning the original image, raw matte, and processing options,
+    /// Run the inference pipeline for a single image, returning the original image, raw matte, and processing defaults,
     /// wrapped in an `InferencedMatte`.
     pub fn for_image(&self, image_path: impl AsRef<Path>) -> OutlineResult<InferencedMatte> {
         let session = self.get_or_init_cached_session()?;
@@ -206,7 +209,7 @@ impl Outline {
         Ok(InferencedMatte::new(
             rgb,
             matte,
-            self.default_mask_processing.clone(),
+            self.mask_processing_defaults.clone(),
         ))
     }
 
@@ -217,7 +220,7 @@ impl Outline {
         Ok(InferencedMatte::new(
             rgb,
             matte,
-            self.default_mask_processing.clone(),
+            self.mask_processing_defaults.clone(),
         ))
     }
 
