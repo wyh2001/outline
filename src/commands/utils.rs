@@ -83,7 +83,7 @@ pub fn processing_requested(args: &MaskProcessingArgs) -> bool {
 }
 
 /// Check if there's a conflict between soft mask mode and operations that assume hard masks.
-/// Returns true if --no-binary is set but dilation, erosion, or fill-holes are requested.
+/// Returns true if --binary disabled is set but dilation, erosion, or fill-holes are requested.
 pub fn has_soft_conflict(args: &MaskProcessingArgs) -> bool {
     args.binary == BinaryOption::Disabled
         && (args.dilate.is_some() || args.erode.is_some() || args.fill_holes)
@@ -93,7 +93,7 @@ pub fn has_soft_conflict(args: &MaskProcessingArgs) -> bool {
 pub fn warn_if_soft_conflict(args: &MaskProcessingArgs, context: &str) {
     if has_soft_conflict(args) {
         eprintln!(
-            "Warning: --no-binary disables thresholding, but dilation/erosion/fill-holes assume a hard mask; {} may be unexpected.",
+            "Warning: binary mask processing is disabled, but dilation/erosion/fill-holes assume a hard mask; {} may be unexpected.",
             context
         );
     }
