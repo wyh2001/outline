@@ -393,7 +393,7 @@ mod tests {
         fn default_args() -> MaskProcessingArgs {
             MaskProcessingArgs {
                 blur: None,
-                mask_threshold: 120,
+                mask_threshold: None,
                 binary: BinaryOption::Auto,
                 dilate: None,
                 erode: None,
@@ -410,7 +410,7 @@ mod tests {
         #[test]
         fn false_for_threshold_only() {
             let args = MaskProcessingArgs {
-                mask_threshold: 200,
+                mask_threshold: Some(200),
                 ..default_args()
             };
 
@@ -489,13 +489,13 @@ mod tests {
 
         fn make_args(
             binary: BinaryOption,
-            dilate: Option<f32>,
-            erode: Option<f32>,
+            dilate: Option<Option<f32>>,
+            erode: Option<Option<f32>>,
             fill_holes: bool,
         ) -> MaskProcessingArgs {
             MaskProcessingArgs {
                 blur: None,
-                mask_threshold: 120,
+                mask_threshold: None,
                 binary,
                 dilate,
                 erode,
@@ -506,13 +506,13 @@ mod tests {
 
         #[test]
         fn no_conflict_when_binary_enabled() {
-            let args = make_args(BinaryOption::Enabled, Some(5.0), None, true);
+            let args = make_args(BinaryOption::Enabled, Some(Some(5.0)), None, true);
             assert!(!has_soft_conflict(&args));
         }
 
         #[test]
         fn no_conflict_when_binary_auto() {
-            let args = make_args(BinaryOption::Auto, Some(5.0), None, true);
+            let args = make_args(BinaryOption::Auto, Some(Some(5.0)), None, true);
             assert!(!has_soft_conflict(&args));
         }
 
@@ -524,13 +524,13 @@ mod tests {
 
         #[test]
         fn conflict_when_disabled_with_dilate() {
-            let args = make_args(BinaryOption::Disabled, Some(5.0), None, false);
+            let args = make_args(BinaryOption::Disabled, Some(Some(5.0)), None, false);
             assert!(has_soft_conflict(&args));
         }
 
         #[test]
         fn conflict_when_disabled_with_erode() {
-            let args = make_args(BinaryOption::Disabled, None, Some(5.0), false);
+            let args = make_args(BinaryOption::Disabled, None, Some(Some(5.0)), false);
             assert!(has_soft_conflict(&args));
         }
 
@@ -542,7 +542,12 @@ mod tests {
 
         #[test]
         fn conflict_when_disabled_with_both() {
-            let args = make_args(BinaryOption::Disabled, Some(5.0), Some(5.0), true);
+            let args = make_args(
+                BinaryOption::Disabled,
+                Some(Some(5.0)),
+                Some(Some(5.0)),
+                true,
+            );
             assert!(has_soft_conflict(&args));
         }
     }
