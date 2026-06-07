@@ -16,7 +16,10 @@ pub const DEFAULT_MODEL_PATH: &str = "model.onnx";
 /// Controls the model path, image resize filters for input/output, and threading behavior.
 /// Use builder methods like [`with_input_resize_filter`](InferenceSettings::with_input_resize_filter)
 /// to customize settings.
+///
+/// This struct is non-exhaustive; use [`new`](InferenceSettings::new) to construct it.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct InferenceSettings {
     /// Path to the ONNX model file.
     pub model_path: PathBuf,
