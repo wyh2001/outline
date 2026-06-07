@@ -10,7 +10,10 @@ pub type OutlineResult<T> = std::result::Result<T, OutlineError>;
 ///
 /// This enum covers errors from model inference, image I/O, mask processing,
 /// and vectorization operations.
+///
+/// This enum is non-exhaustive; include a wildcard arm when matching it.
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum OutlineError {
     /// ONNX Runtime inference error.
     #[error("ONNX Runtime error: {0}")]
