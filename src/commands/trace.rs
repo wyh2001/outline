@@ -5,13 +5,13 @@ use outline::{OutlineResult, VtracerSvgVectorizer};
 use crate::cli::{GlobalOptions, MaskSourceArg, TraceCommand};
 
 use super::utils::{
-    build_outline, derive_svg_path, processing_requested, resolve_mask_source_arg,
-    warn_if_soft_conflict,
+    build_outline, derive_svg_path, mask_pipeline_from_args, processing_requested,
+    resolve_mask_source_arg, warn_if_soft_conflict,
 };
 
 /// The main function to run the trace command.
 pub fn run(global: &GlobalOptions, cmd: TraceCommand) -> OutlineResult<()> {
-    let outline = build_outline(global, &cmd.mask_processing);
+    let outline = build_outline(global);
     let session = outline.for_image(&cmd.input)?;
     let matte = session.matte();
     let output_path = cmd
@@ -23,6 +23,7 @@ pub fn run(global: &GlobalOptions, cmd: TraceCommand) -> OutlineResult<()> {
 
     let vectorizer = VtracerSvgVectorizer;
     let processing_requested = processing_requested(&cmd.mask_processing);
+    let mask_pipeline = mask_pipeline_from_args(&cmd.mask_processing);
 
     let mask_source = resolve_mask_source_arg(cmd.mask_source, processing_requested);
 
@@ -32,7 +33,10 @@ pub fn run(global: &GlobalOptions, cmd: TraceCommand) -> OutlineResult<()> {
 
     let svg = match mask_source {
         MaskSourceArg::Raw => matte.trace(&vectorizer, &options)?,
-        MaskSourceArg::Processed => matte.clone().processed()?.trace(&vectorizer, &options)?,
+        MaskSourceArg::Processed => matte
+            .clone()
+            .processed_with(&mask_pipeline)?
+            .trace(&vectorizer, &options)?,
         MaskSourceArg::Auto => unreachable!(),
     };
     fs::write(&output_path, &svg)?;

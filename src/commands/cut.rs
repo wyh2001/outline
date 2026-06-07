@@ -3,13 +3,13 @@ use outline::{MaskHandle, MatteHandle, OutlineResult};
 use crate::cli::{AlphaFromArg, CutCommand, GlobalOptions};
 
 use super::utils::{
-    build_outline, derive_variant_path, processing_requested, resolve_alpha_source,
-    resolve_export_path, warn_if_soft_conflict,
+    build_outline, derive_variant_path, mask_pipeline_from_args, processing_requested,
+    resolve_alpha_source, resolve_export_path, warn_if_soft_conflict,
 };
 
 /// The main function to run the cut command.
 pub fn run(global: &GlobalOptions, cmd: CutCommand) -> OutlineResult<()> {
-    let outline = build_outline(global, &cmd.mask_processing);
+    let outline = build_outline(global);
     let session = outline.for_image(&cmd.input)?;
     let matte = session.matte();
     let output_path = cmd
@@ -22,6 +22,7 @@ pub fn run(global: &GlobalOptions, cmd: CutCommand) -> OutlineResult<()> {
 
     let mut processed_mask: Option<MaskHandle> = None;
     let processing_requested = processing_requested(&cmd.mask_processing);
+    let mask_pipeline = mask_pipeline_from_args(&cmd.mask_processing);
 
     let alpha_source = resolve_alpha_source(cmd.alpha_source, processing_requested);
 
@@ -35,7 +36,7 @@ pub fn run(global: &GlobalOptions, cmd: CutCommand) -> OutlineResult<()> {
         if let Some(mask) = &processed_mask {
             Ok(mask.clone())
         } else {
-            let mask = matte.clone().processed()?;
+            let mask = matte.clone().processed_with(&mask_pipeline)?;
             processed_mask = Some(mask.clone());
             Ok(mask)
         }

@@ -1,9 +1,10 @@
 use std::path::{Path, PathBuf};
 
-use outline::{MaskProcessingOptions, Outline};
+use outline::{MaskPipeline, Outline};
 
 use crate::cli::{
-    AlphaFromArg, BinaryOption, GlobalOptions, MaskExportSource, MaskProcessingArgs, MaskSourceArg,
+    AlphaFromArg, BinaryOption, CliMaskProcessingRequest, GlobalOptions, MaskExportSource,
+    MaskProcessingArgs, MaskSourceArg,
 };
 
 fn resolve_model_path(global: &GlobalOptions) -> PathBuf {
@@ -33,14 +34,12 @@ fn resolve_model_path_impl(global: &GlobalOptions, cached: Option<&Path>) -> Pat
     PathBuf::from(outline::DEFAULT_MODEL_PATH)
 }
 
-/// The convenience function to build an Outline instance with the input global and mask processing options.
-pub fn build_outline(global: &GlobalOptions, mask_args: &MaskProcessingArgs) -> Outline {
-    let mask_processing = mask_args.into();
+/// The convenience function to build an Outline instance with the input global options.
+pub fn build_outline(global: &GlobalOptions) -> Outline {
     Outline::new(resolve_model_path(global))
         .with_input_resize_filter(global.input_resample_filter.into())
         .with_output_resize_filter(global.output_resample_filter.into())
         .with_intra_threads(global.intra_threads)
-        .with_default_mask_processing(mask_processing)
 }
 
 /// Derive a variant file path by appending a suffix before the extension.
@@ -78,8 +77,16 @@ pub fn derive_svg_path(input: &Path) -> PathBuf {
 
 /// Determine if any mask processing is requested based on the provided arguments.
 pub fn processing_requested(args: &MaskProcessingArgs) -> bool {
-    let derived: MaskProcessingOptions = args.into();
-    derived != MaskProcessingOptions::default()
+    !mask_processing_request_from_args(args).is_empty()
+}
+
+/// Build the fixed-order mask processing pipeline requested by CLI flags.
+pub fn mask_pipeline_from_args(args: &MaskProcessingArgs) -> MaskPipeline {
+    mask_processing_request_from_args(args).to_pipeline()
+}
+
+fn mask_processing_request_from_args(args: &MaskProcessingArgs) -> CliMaskProcessingRequest {
+    CliMaskProcessingRequest::from_args(args)
 }
 
 /// Check if there's a conflict between soft mask mode and operations that assume hard masks.
@@ -377,6 +384,47 @@ mod tests {
         fn explicit_processed() {
             let result = resolve_alpha_source(AlphaFromArg::Processed, false);
             assert!(matches!(result, AlphaFromArg::Processed));
+        }
+    }
+
+    mod processing_requested {
+        use crate::cli::{BinaryOption, MaskProcessingArgs};
+
+        fn default_args() -> MaskProcessingArgs {
+            MaskProcessingArgs {
+                blur: None,
+                mask_threshold: 120,
+                binary: BinaryOption::Auto,
+                dilate: None,
+                erode: None,
+                erode_border: None,
+                fill_holes: false,
+            }
+        }
+
+        #[test]
+        fn false_for_defaults() {
+            assert!(!super::processing_requested(&default_args()));
+        }
+
+        #[test]
+        fn false_for_threshold_only() {
+            let args = MaskProcessingArgs {
+                mask_threshold: 200,
+                ..default_args()
+            };
+
+            assert!(!super::processing_requested(&args));
+        }
+
+        #[test]
+        fn true_for_enabled_binary() {
+            let args = MaskProcessingArgs {
+                binary: BinaryOption::Enabled,
+                ..default_args()
+            };
+
+            assert!(super::processing_requested(&args));
         }
     }
 

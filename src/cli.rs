@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand, ValueEnum, ValueHint};
 use image::imageops::FilterType;
-use outline::{ErosionBorderMode, MaskProcessingOptions, TraceOptions};
+use outline::{ErosionBorderMode, MaskPipeline, TraceOptions};
 use visioncortex::PathSimplifyMode;
 use vtracer::{ColorMode, Hierarchical};
 
@@ -171,29 +171,70 @@ pub struct MaskProcessingArgs {
     pub fill_holes: bool,
 }
 
-impl From<&MaskProcessingArgs> for MaskProcessingOptions {
-    fn from(args: &MaskProcessingArgs) -> Self {
-        let defaults = MaskProcessingOptions::default();
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct CliErodeRequest {
+    radius: f32,
+    border_mode: Option<ErosionBorderMode>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct CliMaskProcessingRequest {
+    blur: Option<f32>,
+    threshold: Option<u8>,
+    dilate: Option<f32>,
+    erode: Option<CliErodeRequest>,
+    fill_holes: Option<u8>,
+}
+
+impl CliMaskProcessingRequest {
+    pub(crate) fn from_args(args: &MaskProcessingArgs) -> Self {
+        let binary_enabled = match args.binary {
+            BinaryOption::Enabled => true,
+            BinaryOption::Disabled => false,
+            BinaryOption::Auto => args.dilate.is_some() || args.erode.is_some() || args.fill_holes,
+        };
+
         Self {
-            binary: (args.binary == BinaryOption::Auto
-                && (args.dilate.is_some() || args.erode.is_some() || args.fill_holes))
-                || args.binary == BinaryOption::Enabled,
-            blur: args.blur.is_some(),
-            blur_sigma: args.blur.unwrap_or(defaults.blur_sigma),
-            mask_threshold: args.mask_threshold,
-            dilate: args.dilate.is_some(),
-            dilation_radius: args.dilate.unwrap_or(defaults.dilation_radius),
-            erode: args.erode.is_some(),
-            erosion_radius: args.erode.unwrap_or(defaults.erosion_radius),
-            erosion_border_mode: if args.erode.is_some() {
-                args.erode_border
-                    .map(Into::into)
-                    .unwrap_or(defaults.erosion_border_mode)
-            } else {
-                defaults.erosion_border_mode
-            },
-            fill_holes: args.fill_holes,
+            blur: args.blur,
+            threshold: binary_enabled.then_some(args.mask_threshold),
+            dilate: args.dilate,
+            erode: args.erode.map(|radius| CliErodeRequest {
+                radius,
+                border_mode: args.erode_border.map(Into::into),
+            }),
+            fill_holes: args.fill_holes.then_some(args.mask_threshold),
         }
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.blur.is_none()
+            && self.threshold.is_none()
+            && self.dilate.is_none()
+            && self.erode.is_none()
+            && self.fill_holes.is_none()
+    }
+
+    pub(crate) fn to_pipeline(&self) -> MaskPipeline {
+        let mut pipeline = MaskPipeline::new();
+
+        if let Some(sigma) = self.blur {
+            pipeline = pipeline.blur_with(sigma);
+        }
+        if let Some(value) = self.threshold {
+            pipeline = pipeline.threshold_with(value);
+        }
+        if let Some(radius) = self.dilate {
+            pipeline = pipeline.dilate_with(radius);
+        }
+        if let Some(erode) = self.erode {
+            pipeline = pipeline
+                .erode_with_border_mode(erode.radius, erode.border_mode.unwrap_or_default());
+        }
+        if let Some(threshold) = self.fill_holes {
+            pipeline = pipeline.fill_holes_with(threshold);
+        }
+
+        pipeline
     }
 }
 
@@ -562,6 +603,7 @@ mod tests {
 
     mod mask_processing_args_conversion {
         use super::*;
+        use outline::MaskOperation;
 
         fn default_args() -> MaskProcessingArgs {
             MaskProcessingArgs {
@@ -575,116 +617,232 @@ mod tests {
             }
         }
 
+        fn request(args: &MaskProcessingArgs) -> CliMaskProcessingRequest {
+            CliMaskProcessingRequest::from_args(args)
+        }
+
+        fn pipeline(args: &MaskProcessingArgs) -> MaskPipeline {
+            request(args).to_pipeline()
+        }
+
         mod unit {
             use super::*;
 
             #[test]
-            fn auto_without_hard_mask_ops_yields_binary_false() {
+            fn auto_without_hard_mask_ops_yields_empty_pipeline() {
                 let args = default_args();
-                let opts = MaskProcessingOptions::from(&args);
-                assert!(!opts.binary);
+                let pipeline = pipeline(&args);
+
+                assert!(pipeline.is_empty());
             }
 
             #[test]
-            fn auto_with_fill_holes_yields_binary_true() {
+            fn mask_threshold_alone_yields_empty_pipeline() {
+                let args = MaskProcessingArgs {
+                    mask_threshold: 200,
+                    ..default_args()
+                };
+                let pipeline = pipeline(&args);
+
+                assert!(pipeline.is_empty());
+            }
+
+            #[test]
+            fn auto_with_fill_holes_adds_threshold_first() {
                 let args = MaskProcessingArgs {
                     fill_holes: true,
                     ..default_args()
                 };
-                let opts = MaskProcessingOptions::from(&args);
-                assert!(opts.binary);
+                let pipeline = pipeline(&args);
+
+                assert!(matches!(
+                    pipeline.operations(),
+                    [
+                        MaskOperation::Threshold { value: 120 },
+                        MaskOperation::FillHoles { threshold: 120 }
+                    ]
+                ));
             }
 
             #[test]
-            fn auto_with_dilate_yields_binary_true() {
+            fn auto_with_dilate_adds_threshold_first() {
                 let args = MaskProcessingArgs {
                     dilate: Some(5.0),
                     ..default_args()
                 };
-                let opts = MaskProcessingOptions::from(&args);
-                assert!(opts.binary);
+                let pipeline = pipeline(&args);
+
+                assert!(matches!(
+                    pipeline.operations(),
+                    [
+                        MaskOperation::Threshold { value: 120 },
+                        MaskOperation::Dilate { radius }
+                    ] if (*radius - 5.0).abs() < f32::EPSILON
+                ));
             }
 
             #[test]
-            fn auto_with_erode_yields_binary_true() {
+            fn auto_with_erode_adds_threshold_first() {
                 let args = MaskProcessingArgs {
                     erode: Some(5.0),
                     ..default_args()
                 };
-                let opts = MaskProcessingOptions::from(&args);
-                assert!(opts.binary);
+                let pipeline = pipeline(&args);
+
+                assert!(matches!(
+                    pipeline.operations(),
+                    [
+                        MaskOperation::Threshold { value: 120 },
+                        MaskOperation::Erode { radius, border_mode }
+                    ] if (*radius - 5.0).abs() < f32::EPSILON
+                        && *border_mode == ErosionBorderMode::OutsideIsBackground
+                ));
             }
 
             #[test]
-            fn disabled_with_fill_holes_yields_binary_false() {
+            fn disabled_with_fill_holes_skips_threshold() {
                 let args = MaskProcessingArgs {
                     binary: BinaryOption::Disabled,
                     fill_holes: true,
                     ..default_args()
                 };
-                let opts = MaskProcessingOptions::from(&args);
-                assert!(!opts.binary);
+                let pipeline = pipeline(&args);
+
+                assert!(matches!(
+                    pipeline.operations(),
+                    [MaskOperation::FillHoles { threshold: 120 }]
+                ));
             }
 
             #[test]
-            fn enabled_always_yields_binary_true() {
+            fn enabled_always_adds_threshold() {
                 let args = MaskProcessingArgs {
                     binary: BinaryOption::Enabled,
                     ..default_args()
                 };
-                let opts = MaskProcessingOptions::from(&args);
-                assert!(opts.binary);
+                let pipeline = pipeline(&args);
+
+                assert!(matches!(
+                    pipeline.operations(),
+                    [MaskOperation::Threshold { value: 120 }]
+                ));
             }
 
             #[test]
-            fn blur_flags_and_sigma() {
+            fn blur_request_adds_pipeline_sigma() {
                 let args = MaskProcessingArgs {
                     blur: Some(10.0),
                     ..default_args()
                 };
-                let opts = MaskProcessingOptions::from(&args);
-                assert!(opts.blur);
-                assert!((opts.blur_sigma - 10.0).abs() < f32::EPSILON);
+                let pipeline = pipeline(&args);
+
+                assert!(matches!(
+                    pipeline.operations(),
+                    [MaskOperation::Blur { sigma }] if (*sigma - 10.0).abs() < f32::EPSILON
+                ));
             }
 
             #[test]
-            fn dilate_flags_and_radius() {
+            fn blur_flag_only_uses_default_sigma_when_materialized() {
+                let args = MaskProcessingArgs {
+                    blur: Some(6.0),
+                    ..default_args()
+                };
+                let pipeline = pipeline(&args);
+
+                assert!(matches!(
+                    pipeline.operations(),
+                    [MaskOperation::Blur { sigma }] if (*sigma - 6.0).abs() < f32::EPSILON
+                ));
+            }
+
+            #[test]
+            fn dilate_request_adds_threshold_and_radius() {
                 let args = MaskProcessingArgs {
                     dilate: Some(8.0),
                     ..default_args()
                 };
-                let opts = MaskProcessingOptions::from(&args);
-                assert!(opts.dilate);
-                assert!((opts.dilation_radius - 8.0).abs() < f32::EPSILON);
+                let pipeline = pipeline(&args);
+
+                assert!(matches!(
+                    pipeline.operations(),
+                    [
+                        MaskOperation::Threshold { value: 120 },
+                        MaskOperation::Dilate { radius }
+                    ] if (*radius - 8.0).abs() < f32::EPSILON
+                ));
             }
 
             #[test]
-            fn erode_flags_and_radius() {
+            fn dilate_flag_only_uses_default_radius_when_materialized() {
+                let args = MaskProcessingArgs {
+                    dilate: Some(5.0),
+                    ..default_args()
+                };
+                let pipeline = pipeline(&args);
+
+                assert!(matches!(
+                    pipeline.operations(),
+                    [
+                        MaskOperation::Threshold { value: 120 },
+                        MaskOperation::Dilate { radius }
+                    ] if (*radius - 5.0).abs() < f32::EPSILON
+                ));
+            }
+
+            #[test]
+            fn erode_request_adds_threshold_and_radius() {
                 let args = MaskProcessingArgs {
                     erode: Some(3.0),
                     ..default_args()
                 };
-                let opts = MaskProcessingOptions::from(&args);
-                assert!(opts.erode);
-                assert!((opts.erosion_radius - 3.0).abs() < f32::EPSILON);
-                assert_eq!(
-                    opts.erosion_border_mode,
-                    MaskProcessingOptions::default().erosion_border_mode
-                );
+                let pipeline = pipeline(&args);
+
+                assert!(matches!(
+                    pipeline.operations(),
+                    [
+                        MaskOperation::Threshold { value: 120 },
+                        MaskOperation::Erode { radius, border_mode }
+                    ] if (*radius - 3.0).abs() < f32::EPSILON
+                        && *border_mode == ErosionBorderMode::default()
+                ));
             }
 
             #[test]
-            fn erode_border_passed_through_when_erode_enabled() {
+            fn erode_flag_only_uses_default_radius_when_materialized() {
+                let args = MaskProcessingArgs {
+                    erode: Some(5.0),
+                    ..default_args()
+                };
+                let pipeline = pipeline(&args);
+
+                assert!(matches!(
+                    pipeline.operations(),
+                    [
+                        MaskOperation::Threshold { value: 120 },
+                        MaskOperation::Erode { radius, border_mode }
+                    ] if (*radius - 5.0).abs() < f32::EPSILON
+                        && *border_mode == ErosionBorderMode::default()
+                ));
+            }
+
+            #[test]
+            fn erode_border_passed_through() {
                 let args = MaskProcessingArgs {
                     erode: Some(3.0),
                     erode_border: Some(ErosionBorderArg::OutsideIsUnknown),
                     ..default_args()
                 };
-                let opts = MaskProcessingOptions::from(&args);
-                assert_eq!(
-                    opts.erosion_border_mode,
-                    ErosionBorderMode::OutsideIsUnknown
-                );
+                let pipeline = pipeline(&args);
+
+                assert!(matches!(
+                    pipeline.operations(),
+                    [
+                        MaskOperation::Threshold { value: 120 },
+                        MaskOperation::Erode { radius, border_mode }
+                    ] if (*radius - 3.0).abs() < f32::EPSILON
+                        && *border_mode == ErosionBorderMode::OutsideIsUnknown
+                ));
             }
 
             #[test]
@@ -693,8 +851,15 @@ mod tests {
                     mask_threshold: 200,
                     ..default_args()
                 };
-                let opts = MaskProcessingOptions::from(&args);
-                assert_eq!(opts.mask_threshold, 200);
+                let pipeline = pipeline(&MaskProcessingArgs {
+                    binary: BinaryOption::Enabled,
+                    ..args
+                });
+
+                assert!(matches!(
+                    pipeline.operations(),
+                    [MaskOperation::Threshold { value: 200 }]
+                ));
             }
         }
     }
@@ -863,12 +1028,18 @@ mod tests {
             }
         }
 
-        // default_missing_value behavior
-        mod default_missing_value {
+        // Optional argument value behavior
+        mod optional_argument_values {
             use super::*;
 
             mod unit {
                 use super::*;
+
+                #[test]
+                fn blur_absent_is_none() {
+                    let cmd = parse_cmd!(["outline", "mask", "in.png"], Mask);
+                    assert_eq!(cmd.mask_processing.blur, None);
+                }
 
                 #[test]
                 fn blur_flag_only_uses_default_sigma() {
@@ -896,6 +1067,12 @@ mod tests {
                 }
 
                 #[test]
+                fn dilate_absent_is_none() {
+                    let cmd = parse_cmd!(["outline", "mask", "in.png"], Mask);
+                    assert_eq!(cmd.mask_processing.dilate, None);
+                }
+
+                #[test]
                 fn dilate_flag_only_uses_default_radius() {
                     let cmd = parse_cmd!(["outline", "mask", "in.png", "--dilate"], Mask);
                     assert_eq!(cmd.mask_processing.dilate, Some(5.0));
@@ -905,6 +1082,12 @@ mod tests {
                 fn dilate_with_value_uses_provided() {
                     let cmd = parse_cmd!(["outline", "mask", "in.png", "--dilate", "8.0"], Mask);
                     assert_eq!(cmd.mask_processing.dilate, Some(8.0));
+                }
+
+                #[test]
+                fn erode_absent_is_none() {
+                    let cmd = parse_cmd!(["outline", "mask", "in.png"], Mask);
+                    assert_eq!(cmd.mask_processing.erode, None);
                 }
 
                 #[test]
@@ -1031,7 +1214,7 @@ mod tests {
             }
         }
 
-        // ValueEnum parsing for global options and compose command
+        // ValueEnum parsing for global options.
         mod value_enum_parsing {
             use super::*;
 
@@ -1101,18 +1284,6 @@ mod tests {
                         "mask",
                         "in.png",
                         "--input-resample-filter",
-                        "invalid",
-                    ]);
-                    assert!(result.is_err());
-                }
-
-                #[test]
-                fn invalid_bg_alpha_mode_rejected() {
-                    let result = Cli::try_parse_from([
-                        "outline",
-                        "compose",
-                        "in.png",
-                        "--bg-alpha-mode",
                         "invalid",
                     ]);
                     assert!(result.is_err());
