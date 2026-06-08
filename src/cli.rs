@@ -1,6 +1,9 @@
+use std::ffi::OsString;
 use std::path::PathBuf;
 
-use clap::{Args, Parser, Subcommand, ValueEnum, ValueHint};
+use clap::{
+    ArgMatches, Args, CommandFactory, FromArgMatches, Parser, Subcommand, ValueEnum, ValueHint,
+};
 use image::imageops::FilterType;
 use outline::{ErosionBorderMode, MaskPipeline, MaskProcessingDefaults, TraceOptions};
 use visioncortex::PathSimplifyMode;
@@ -15,6 +18,40 @@ pub struct Cli {
 
     #[command(subcommand)]
     pub command: Commands,
+}
+
+impl Cli {
+    pub fn parse() -> Self {
+        match Self::try_parse_from(std::env::args_os()) {
+            Ok(cli) => cli,
+            Err(err) => err.exit(),
+        }
+    }
+
+    pub fn try_parse_from<I, T>(itr: I) -> Result<Self, clap::Error>
+    where
+        I: IntoIterator<Item = T>,
+        T: Into<OsString> + Clone,
+    {
+        let matches = Self::command().try_get_matches_from(itr)?;
+        let mut cli = <Self as FromArgMatches>::from_arg_matches(&matches)?;
+        cli.populate_ordered_mask_steps(&matches);
+        Ok(cli)
+    }
+
+    fn populate_ordered_mask_steps(&mut self, matches: &ArgMatches) {
+        let Some((_, command_matches)) = matches.subcommand() else {
+            return;
+        };
+
+        match &mut self.command {
+            Commands::Mask(cmd) => cmd.mask_processing.populate_ordered_steps(command_matches),
+            Commands::Cut(cmd) => cmd.mask_processing.populate_ordered_steps(command_matches),
+            Commands::Trace(cmd) => cmd.mask_processing.populate_ordered_steps(command_matches),
+            #[cfg(feature = "fetch-model")]
+            Commands::FetchModel(_) => {}
+        }
+    }
 }
 
 #[derive(Args, Debug)]
@@ -169,72 +206,135 @@ pub struct MaskProcessingArgs {
     /// Fill enclosed holes in the mask before vectorization
     #[arg(long = "fill-holes")]
     pub fill_holes: bool,
+    #[arg(skip)]
+    pub(crate) ordered_steps: Vec<CliMaskProcessingStep>,
+}
+
+impl MaskProcessingArgs {
+    fn populate_ordered_steps(&mut self, matches: &ArgMatches) {
+        let mut entries = Vec::new();
+        if let Some(sigma) = self.blur
+            && let Some(index) = matches.index_of("blur")
+        {
+            entries.push((index, CliMaskProcessingStep::Blur(sigma)));
+        }
+        if let Some(radius) = self.dilate
+            && let Some(index) = matches.index_of("dilate")
+        {
+            entries.push((index, CliMaskProcessingStep::Dilate(radius)));
+        }
+        if let Some(radius) = self.erode
+            && let Some(index) = matches.index_of("erode")
+        {
+            entries.push((
+                index,
+                CliMaskProcessingStep::Erode {
+                    radius,
+                    border_mode: self.erode_border.map(Into::into),
+                },
+            ));
+        }
+
+        if self.fill_holes
+            && let Some(index) = matches.index_of("fill_holes")
+        {
+            entries.push((index, CliMaskProcessingStep::FillHoles(self.mask_threshold)));
+        }
+
+        if self.binary == BinaryOption::Enabled
+            && let Some(index) = matches.index_of("binary")
+        {
+            entries.push((index, CliMaskProcessingStep::Threshold(self.mask_threshold)));
+        }
+
+        entries.sort_by_key(|(index, _)| *index);
+        let mut steps: Vec<_> = entries.into_iter().map(|(_, step)| step).collect();
+
+        if self.binary == BinaryOption::Auto
+            && let Some(index) = steps.iter().position(|step| step.assumes_binary_mask())
+        {
+            steps.insert(index, CliMaskProcessingStep::Threshold(self.mask_threshold));
+        }
+
+        self.ordered_steps = steps;
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-struct CliErodeRequest {
-    radius: Option<f32>,
-    border_mode: Option<ErosionBorderMode>,
+pub(crate) enum CliMaskProcessingStep {
+    Blur(Option<f32>),
+    Threshold(Option<u8>),
+    Dilate(Option<f32>),
+    Erode {
+        radius: Option<f32>,
+        border_mode: Option<ErosionBorderMode>,
+    },
+    FillHoles(Option<u8>),
+}
+
+impl CliMaskProcessingStep {
+    fn assumes_binary_mask(self) -> bool {
+        matches!(
+            self,
+            Self::Dilate(_) | Self::Erode { .. } | Self::FillHoles(_)
+        )
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct CliMaskProcessingRequest {
-    blur: Option<Option<f32>>,
-    threshold: Option<Option<u8>>,
-    dilate: Option<Option<f32>>,
-    erode: Option<CliErodeRequest>,
-    fill_holes: Option<Option<u8>>,
+    steps: Vec<CliMaskProcessingStep>,
 }
 
 impl CliMaskProcessingRequest {
     pub(crate) fn from_args(args: &MaskProcessingArgs) -> Self {
-        let binary_enabled = match args.binary {
-            BinaryOption::Enabled => true,
-            BinaryOption::Disabled => false,
-            BinaryOption::Auto => args.dilate.is_some() || args.erode.is_some() || args.fill_holes,
-        };
+        if args.ordered_steps.is_empty() {
+            assert!(
+                args.blur.is_none()
+                    && args.dilate.is_none()
+                    && args.erode.is_none()
+                    && args.erode_border.is_none()
+                    && !args.fill_holes
+                    && args.binary != BinaryOption::Enabled,
+                "MaskProcessingArgs must be populated through Cli::try_parse_from before conversion"
+            );
+        }
 
         Self {
-            blur: args.blur,
-            threshold: binary_enabled.then_some(args.mask_threshold),
-            dilate: args.dilate,
-            erode: args.erode.map(|radius| CliErodeRequest {
-                radius,
-                border_mode: args.erode_border.map(Into::into),
-            }),
-            fill_holes: args.fill_holes.then_some(args.mask_threshold),
+            steps: args.ordered_steps.clone(),
         }
     }
 
     pub(crate) fn is_empty(&self) -> bool {
-        self.blur.is_none()
-            && self.threshold.is_none()
-            && self.dilate.is_none()
-            && self.erode.is_none()
-            && self.fill_holes.is_none()
+        self.steps.is_empty()
     }
 
     pub(crate) fn to_pipeline(&self) -> MaskPipeline {
         let defaults = MaskProcessingDefaults::default();
         let mut pipeline = MaskPipeline::new();
 
-        if let Some(sigma) = self.blur {
-            pipeline = pipeline.blur_with(sigma.unwrap_or(defaults.blur_sigma));
-        }
-        if let Some(value) = self.threshold {
-            pipeline = pipeline.threshold_with(value.unwrap_or(defaults.mask_threshold));
-        }
-        if let Some(radius) = self.dilate {
-            pipeline = pipeline.dilate_with(radius.unwrap_or(defaults.dilation_radius));
-        }
-        if let Some(erode) = self.erode {
-            pipeline = pipeline.erode_with_border_mode(
-                erode.radius.unwrap_or(defaults.erosion_radius),
-                erode.border_mode.unwrap_or(defaults.erosion_border_mode),
-            );
-        }
-        if let Some(threshold) = self.fill_holes {
-            pipeline = pipeline.fill_holes_with(threshold.unwrap_or(defaults.mask_threshold));
+        for step in &self.steps {
+            pipeline = match *step {
+                CliMaskProcessingStep::Blur(sigma) => {
+                    pipeline.blur_with(sigma.unwrap_or(defaults.blur_sigma))
+                }
+                CliMaskProcessingStep::Threshold(value) => {
+                    pipeline.threshold_with(value.unwrap_or(defaults.mask_threshold))
+                }
+                CliMaskProcessingStep::Dilate(radius) => {
+                    pipeline.dilate_with(radius.unwrap_or(defaults.dilation_radius))
+                }
+                CliMaskProcessingStep::Erode {
+                    radius,
+                    border_mode,
+                } => pipeline.erode_with_border_mode(
+                    radius.unwrap_or(defaults.erosion_radius),
+                    border_mode.unwrap_or(defaults.erosion_border_mode),
+                ),
+                CliMaskProcessingStep::FillHoles(threshold) => {
+                    pipeline.fill_holes_with(threshold.unwrap_or(defaults.mask_threshold))
+                }
+            };
         }
 
         pipeline
@@ -617,6 +717,7 @@ mod tests {
                 erode: None,
                 erode_border: None,
                 fill_holes: false,
+                ordered_steps: vec![],
             }
         }
 
@@ -651,9 +752,12 @@ mod tests {
             }
 
             #[test]
-            fn auto_with_fill_holes_adds_threshold_first() {
+            fn threshold_then_fill_holes_materializes_in_order() {
                 let args = MaskProcessingArgs {
-                    fill_holes: true,
+                    ordered_steps: vec![
+                        CliMaskProcessingStep::Threshold(None),
+                        CliMaskProcessingStep::FillHoles(None),
+                    ],
                     ..default_args()
                 };
                 let pipeline = pipeline(&args);
@@ -668,9 +772,12 @@ mod tests {
             }
 
             #[test]
-            fn auto_with_dilate_adds_threshold_first() {
+            fn threshold_then_dilate_materializes_in_order() {
                 let args = MaskProcessingArgs {
-                    dilate: Some(Some(5.0)),
+                    ordered_steps: vec![
+                        CliMaskProcessingStep::Threshold(None),
+                        CliMaskProcessingStep::Dilate(Some(5.0)),
+                    ],
                     ..default_args()
                 };
                 let pipeline = pipeline(&args);
@@ -685,9 +792,15 @@ mod tests {
             }
 
             #[test]
-            fn auto_with_erode_adds_threshold_first() {
+            fn threshold_then_erode_materializes_in_order() {
                 let args = MaskProcessingArgs {
-                    erode: Some(Some(5.0)),
+                    ordered_steps: vec![
+                        CliMaskProcessingStep::Threshold(None),
+                        CliMaskProcessingStep::Erode {
+                            radius: Some(5.0),
+                            border_mode: None,
+                        },
+                    ],
                     ..default_args()
                 };
                 let pipeline = pipeline(&args);
@@ -703,10 +816,9 @@ mod tests {
             }
 
             #[test]
-            fn disabled_with_fill_holes_skips_threshold() {
+            fn fill_holes_without_threshold_materializes_as_requested() {
                 let args = MaskProcessingArgs {
-                    binary: BinaryOption::Disabled,
-                    fill_holes: true,
+                    ordered_steps: vec![CliMaskProcessingStep::FillHoles(None)],
                     ..default_args()
                 };
                 let pipeline = pipeline(&args);
@@ -718,9 +830,9 @@ mod tests {
             }
 
             #[test]
-            fn enabled_always_adds_threshold() {
+            fn threshold_only_materializes_as_requested() {
                 let args = MaskProcessingArgs {
-                    binary: BinaryOption::Enabled,
+                    ordered_steps: vec![CliMaskProcessingStep::Threshold(None)],
                     ..default_args()
                 };
                 let pipeline = pipeline(&args);
@@ -734,7 +846,7 @@ mod tests {
             #[test]
             fn blur_request_adds_pipeline_sigma() {
                 let args = MaskProcessingArgs {
-                    blur: Some(Some(10.0)),
+                    ordered_steps: vec![CliMaskProcessingStep::Blur(Some(10.0))],
                     ..default_args()
                 };
                 let pipeline = pipeline(&args);
@@ -748,7 +860,7 @@ mod tests {
             #[test]
             fn blur_flag_only_uses_default_sigma_when_materialized() {
                 let args = MaskProcessingArgs {
-                    blur: Some(None),
+                    ordered_steps: vec![CliMaskProcessingStep::Blur(None)],
                     ..default_args()
                 };
                 let pipeline = pipeline(&args);
@@ -762,7 +874,10 @@ mod tests {
             #[test]
             fn dilate_request_adds_threshold_and_radius() {
                 let args = MaskProcessingArgs {
-                    dilate: Some(Some(8.0)),
+                    ordered_steps: vec![
+                        CliMaskProcessingStep::Threshold(None),
+                        CliMaskProcessingStep::Dilate(Some(8.0)),
+                    ],
                     ..default_args()
                 };
                 let pipeline = pipeline(&args);
@@ -779,7 +894,10 @@ mod tests {
             #[test]
             fn dilate_flag_only_uses_default_radius_when_materialized() {
                 let args = MaskProcessingArgs {
-                    dilate: Some(None),
+                    ordered_steps: vec![
+                        CliMaskProcessingStep::Threshold(None),
+                        CliMaskProcessingStep::Dilate(None),
+                    ],
                     ..default_args()
                 };
                 let pipeline = pipeline(&args);
@@ -796,7 +914,13 @@ mod tests {
             #[test]
             fn erode_request_adds_threshold_and_radius() {
                 let args = MaskProcessingArgs {
-                    erode: Some(Some(3.0)),
+                    ordered_steps: vec![
+                        CliMaskProcessingStep::Threshold(None),
+                        CliMaskProcessingStep::Erode {
+                            radius: Some(3.0),
+                            border_mode: None,
+                        },
+                    ],
                     ..default_args()
                 };
                 let pipeline = pipeline(&args);
@@ -814,7 +938,13 @@ mod tests {
             #[test]
             fn erode_flag_only_uses_default_radius_when_materialized() {
                 let args = MaskProcessingArgs {
-                    erode: Some(None),
+                    ordered_steps: vec![
+                        CliMaskProcessingStep::Threshold(None),
+                        CliMaskProcessingStep::Erode {
+                            radius: None,
+                            border_mode: None,
+                        },
+                    ],
                     ..default_args()
                 };
                 let pipeline = pipeline(&args);
@@ -832,8 +962,13 @@ mod tests {
             #[test]
             fn erode_border_passed_through() {
                 let args = MaskProcessingArgs {
-                    erode: Some(Some(3.0)),
-                    erode_border: Some(ErosionBorderArg::OutsideIsUnknown),
+                    ordered_steps: vec![
+                        CliMaskProcessingStep::Threshold(None),
+                        CliMaskProcessingStep::Erode {
+                            radius: Some(3.0),
+                            border_mode: Some(ErosionBorderMode::OutsideIsUnknown),
+                        },
+                    ],
                     ..default_args()
                 };
                 let pipeline = pipeline(&args);
@@ -851,18 +986,26 @@ mod tests {
             #[test]
             fn threshold_passed_through() {
                 let args = MaskProcessingArgs {
-                    mask_threshold: Some(200),
+                    ordered_steps: vec![CliMaskProcessingStep::Threshold(Some(200))],
                     ..default_args()
                 };
-                let pipeline = pipeline(&MaskProcessingArgs {
-                    binary: BinaryOption::Enabled,
-                    ..args
-                });
+                let pipeline = pipeline(&args);
 
                 assert!(matches!(
                     pipeline.operations(),
                     [MaskOperation::Threshold { value: 200 }]
                 ));
+            }
+
+            #[test]
+            #[should_panic(expected = "MaskProcessingArgs must be populated")]
+            fn raw_operation_fields_fail_fast() {
+                let args = MaskProcessingArgs {
+                    blur: Some(Some(10.0)),
+                    ..default_args()
+                };
+
+                let _ = pipeline(&args);
             }
         }
     }
@@ -963,7 +1106,6 @@ mod tests {
 
     mod clap_integration {
         use super::*;
-        use clap::Parser;
         use std::path::Path;
 
         macro_rules! parse_cmd {
@@ -1138,6 +1280,130 @@ mod tests {
             }
         }
 
+        mod ordered_mask_processing {
+            use super::*;
+            use outline::MaskOperation;
+
+            fn pipeline(args: &MaskProcessingArgs) -> MaskPipeline {
+                CliMaskProcessingRequest::from_args(args).to_pipeline()
+            }
+
+            mod unit {
+                use super::*;
+
+                #[test]
+                fn fixed_flags_preserve_cross_operation_order() {
+                    let cmd = parse_cmd!(
+                        [
+                            "outline", "mask", "in.png", "--blur", "2.0", "--dilate", "5.0",
+                            "--erode", "1.0"
+                        ],
+                        Mask
+                    );
+                    let pipeline = pipeline(&cmd.mask_processing);
+
+                    assert!(matches!(
+                        pipeline.operations(),
+                        [
+                            MaskOperation::Blur { sigma: first_sigma },
+                            MaskOperation::Threshold { value: 120 },
+                            MaskOperation::Dilate { radius },
+                            MaskOperation::Erode { radius: erode_radius, border_mode },
+                        ] if (*first_sigma - 2.0).abs() < f32::EPSILON
+                            && (*radius - 5.0).abs() < f32::EPSILON
+                            && (*erode_radius - 1.0).abs() < f32::EPSILON
+                            && *border_mode == ErosionBorderMode::default()
+                    ));
+                }
+
+                #[test]
+                fn repeated_operation_flag_is_rejected() {
+                    let result = Cli::try_parse_from([
+                        "outline", "mask", "in.png", "--blur", "2.0", "--blur", "8.0",
+                    ]);
+
+                    assert!(result.is_err());
+                }
+
+                #[test]
+                fn auto_threshold_is_inserted_before_first_hard_mask_operation() {
+                    let cmd = parse_cmd!(
+                        [
+                            "outline", "mask", "in.png", "--dilate", "5.0", "--blur", "2.0"
+                        ],
+                        Mask
+                    );
+                    let pipeline = pipeline(&cmd.mask_processing);
+
+                    assert!(matches!(
+                        pipeline.operations(),
+                        [
+                            MaskOperation::Threshold { value: 120 },
+                            MaskOperation::Dilate { radius },
+                            MaskOperation::Blur { sigma },
+                        ] if (*radius - 5.0).abs() < f32::EPSILON
+                            && (*sigma - 2.0).abs() < f32::EPSILON
+                    ));
+                }
+
+                #[test]
+                fn binary_disabled_preserves_order_without_auto_threshold() {
+                    let cmd = parse_cmd!(
+                        [
+                            "outline", "mask", "in.png", "--dilate", "5.0", "--blur", "2.0",
+                            "--binary", "disabled"
+                        ],
+                        Mask
+                    );
+                    let pipeline = pipeline(&cmd.mask_processing);
+
+                    assert!(matches!(
+                        pipeline.operations(),
+                        [
+                            MaskOperation::Dilate { radius },
+                            MaskOperation::Blur { sigma },
+                        ] if (*radius - 5.0).abs() < f32::EPSILON
+                            && (*sigma - 2.0).abs() < f32::EPSILON
+                    ));
+                }
+
+                #[test]
+                fn explicit_binary_threshold_uses_flag_position() {
+                    let cmd = parse_cmd!(
+                        [
+                            "outline", "mask", "in.png", "--blur", "2.0", "--binary", "--dilate",
+                            "5.0"
+                        ],
+                        Mask
+                    );
+                    let pipeline = pipeline(&cmd.mask_processing);
+
+                    assert!(matches!(
+                        pipeline.operations(),
+                        [
+                            MaskOperation::Blur { sigma },
+                            MaskOperation::Threshold { value: 120 },
+                            MaskOperation::Dilate { radius },
+                        ] if (*sigma - 2.0).abs() < f32::EPSILON
+                            && (*radius - 5.0).abs() < f32::EPSILON
+                    ));
+                }
+
+                #[test]
+                fn mask_pipeline_string_is_not_supported() {
+                    let result = Cli::try_parse_from([
+                        "outline",
+                        "mask",
+                        "in.png",
+                        "--mask-pipeline",
+                        "blur 2; dilate 5",
+                    ]);
+
+                    assert!(result.is_err());
+                }
+            }
+        }
+
         // conflicts_with behavior
         mod conflicts_with {
             use super::*;
@@ -1299,7 +1565,6 @@ mod tests {
         /// Priority: --model flag > OUTLINE_MODEL_PATH env var > (downstream: cached > default)
         mod model_path_priority {
             use super::*;
-            use clap::Parser;
             use std::sync::Mutex;
 
             // Serialize env-var tests so they don't race each other.

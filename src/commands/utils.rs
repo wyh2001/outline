@@ -80,7 +80,7 @@ pub fn processing_requested(args: &MaskProcessingArgs) -> bool {
     !mask_processing_request_from_args(args).is_empty()
 }
 
-/// Build the fixed-order mask processing pipeline requested by CLI flags.
+/// Build the mask processing pipeline requested by CLI flags.
 pub fn mask_pipeline_from_args(args: &MaskProcessingArgs) -> MaskPipeline {
     mask_processing_request_from_args(args).to_pipeline()
 }
@@ -388,7 +388,7 @@ mod tests {
     }
 
     mod processing_requested {
-        use crate::cli::{BinaryOption, MaskProcessingArgs};
+        use crate::cli::{BinaryOption, CliMaskProcessingStep, MaskProcessingArgs};
 
         fn default_args() -> MaskProcessingArgs {
             MaskProcessingArgs {
@@ -399,6 +399,7 @@ mod tests {
                 erode: None,
                 erode_border: None,
                 fill_holes: false,
+                ordered_steps: vec![],
             }
         }
 
@@ -420,7 +421,7 @@ mod tests {
         #[test]
         fn true_for_enabled_binary() {
             let args = MaskProcessingArgs {
-                binary: BinaryOption::Enabled,
+                ordered_steps: vec![CliMaskProcessingStep::Threshold(None)],
                 ..default_args()
             };
 
@@ -501,6 +502,7 @@ mod tests {
                 erode,
                 erode_border: None,
                 fill_holes,
+                ordered_steps: vec![],
             }
         }
 

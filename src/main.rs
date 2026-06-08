@@ -4,7 +4,6 @@ mod commands;
 mod model_fetch;
 mod report;
 
-use clap::Parser;
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
