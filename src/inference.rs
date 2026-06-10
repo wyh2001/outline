@@ -34,33 +34,46 @@ pub const DEFAULT_MODEL_INPUT_SPEC: ModelInputSpec = ModelInputSpec {
     layout: ChannelLayout::Nchw,
 };
 
-/// Lazily cached ONNX Runtime session plus the derived input spec.
+/// Cached inference entry point for the full matte pipeline.
 #[derive(Debug)]
 pub struct CachedInferenceSession {
-    session: Mutex<Session>,
-    input_spec: ModelInputSpec,
+    backend: BackendSession,
 }
 
-impl CachedInferenceSession {
-    /// Create a cached ONNX Runtime session and derive the model input spec once.
-    pub fn new(settings: &InferenceSettings) -> OutlineResult<Self> {
+#[derive(Debug)]
+enum BackendSession {
+    Ort(OrtInferenceSession),
+}
+
+impl BackendSession {
+    fn new(settings: &InferenceSettings) -> OutlineResult<Self> {
         if !settings.model_path.is_file() {
             return Err(OutlineError::ModelNotFound {
                 path: settings.model_path.clone(),
             });
         }
 
-        let mut builder =
-            Session::builder()?.with_optimization_level(GraphOptimizationLevel::Level3)?;
-        if let Some(n) = settings.intra_threads {
-            builder = builder.with_intra_threads(n)?;
-        }
-        let session = builder.commit_from_file(&settings.model_path)?;
-        let input_spec = determine_model_input_spec(&session);
+        Ok(Self::Ort(OrtInferenceSession::new(settings)?))
+    }
 
+    fn input_spec(&self) -> ModelInputSpec {
+        match self {
+            Self::Ort(session) => session.input_spec(),
+        }
+    }
+
+    fn run_model(&self, input_array: Array4<f32>) -> OutlineResult<Array2<f32>> {
+        match self {
+            Self::Ort(session) => session.run_model(input_array),
+        }
+    }
+}
+
+impl CachedInferenceSession {
+    /// Create a cached inference session.
+    pub fn new(settings: &InferenceSettings) -> OutlineResult<Self> {
         Ok(Self {
-            session: Mutex::new(session),
-            input_spec,
+            backend: BackendSession::new(settings)?,
         })
     }
 
@@ -83,21 +96,54 @@ impl CachedInferenceSession {
         let orig_w = rgb_input.width();
         let orig_h = rgb_input.height();
 
-        let input_tensor =
-            preprocess_image_to_tensor(&rgb_input, settings.input_resize_filter, self.input_spec)?;
-        let matte_hw = self.run_model(input_tensor)?;
+        let input_array = preprocess_image_to_array(
+            &rgb_input,
+            settings.input_resize_filter,
+            self.backend.input_spec(),
+        )?;
+        let matte_hw = self.backend.run_model(input_array)?;
         let matte_orig = resize_matte(&matte_hw, orig_w, orig_h, settings.output_resize_filter)?;
         let raw_matte = array_to_gray_image(&matte_orig);
 
         Ok((rgb_input, raw_matte))
     }
+}
 
-    /// Execute the model for one preprocessed input tensor while holding the session lock.
-    fn run_model(&self, input_tensor: Tensor<f32>) -> OutlineResult<Array2<f32>> {
+/// ONNX Runtime-backed model session.
+#[derive(Debug)]
+struct OrtInferenceSession {
+    session: Mutex<Session>,
+    input_spec: ModelInputSpec,
+}
+
+impl OrtInferenceSession {
+    /// Create an ONNX Runtime-backed session.
+    fn new(settings: &InferenceSettings) -> OutlineResult<Self> {
+        let mut builder =
+            Session::builder()?.with_optimization_level(GraphOptimizationLevel::Level3)?;
+        if let Some(n) = settings.intra_threads {
+            builder = builder.with_intra_threads(n)?;
+        }
+        let session = builder.commit_from_file(&settings.model_path)?;
+        let input_spec = determine_model_input_spec(&session);
+
+        Ok(Self {
+            session: Mutex::new(session),
+            input_spec,
+        })
+    }
+
+    fn input_spec(&self) -> ModelInputSpec {
+        self.input_spec
+    }
+
+    /// Execute the model for one preprocessed input array while holding the session lock.
+    fn run_model(&self, input_array: Array4<f32>) -> OutlineResult<Array2<f32>> {
         let mut session = self
             .session
             .lock()
             .map_err(|_| io::Error::other("cached inference session mutex poisoned"))?;
+        let input_tensor = Tensor::from_array(input_array)?;
         let outputs = session.run(ort::inputs![input_tensor])?;
         let matte = outputs[0].try_extract_array::<f32>()?;
         extract_matte_hw(matte)
@@ -191,12 +237,12 @@ pub(crate) fn load_rgb_from_memory_with_orientation(bytes: &[u8]) -> OutlineResu
     Ok(image.into_rgb8())
 }
 
-/// Resize and normalizes the RGB image into a tensor that matches the model spec.
-pub fn preprocess_image_to_tensor(
+/// Resize and normalizes the RGB image into an array that matches the model spec.
+pub fn preprocess_image_to_array(
     rgb: &RgbImage,
     filter: FilterType,
     spec: ModelInputSpec,
-) -> OutlineResult<Tensor<f32>> {
+) -> OutlineResult<Array4<f32>> {
     let target_w = u32::try_from(spec.width).map_err(|_| {
         io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -247,8 +293,7 @@ pub fn preprocess_image_to_tensor(
         }
     };
 
-    let array = Array4::from_shape_vec(shape, data)?;
-    Ok(Tensor::from_array(array)?)
+    Ok(Array4::from_shape_vec(shape, data)?)
 }
 
 /// Remove singleton axes to get the raw H×W matte from the model output.
