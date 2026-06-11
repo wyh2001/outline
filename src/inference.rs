@@ -2,15 +2,23 @@ use std::convert::TryFrom;
 use std::io;
 use std::io::Cursor;
 use std::path::Path;
+#[cfg(feature = "backend-ort")]
 use std::sync::Mutex;
 
 use image::imageops::FilterType;
 use image::{DynamicImage, GrayImage, ImageBuffer, ImageDecoder, ImageReader, Luma, RgbImage};
 use ndarray::{Array2, Array4, ArrayViewD, Axis, Ix2};
+#[cfg(feature = "backend-rten")]
+use ndarray::{ArrayD, IxDyn};
+#[cfg(feature = "backend-ort")]
 use ort::session::Session;
+#[cfg(feature = "backend-ort")]
 use ort::session::builder::GraphOptimizationLevel;
+#[cfg(feature = "backend-ort")]
 use ort::value::Tensor;
 
+#[cfg(any(feature = "backend-ort", feature = "backend-rten"))]
+use crate::config::InferenceBackend;
 use crate::config::InferenceSettings;
 use crate::error::{OutlineError, OutlineResult};
 use crate::mask::array_to_gray_image;
@@ -42,7 +50,10 @@ pub struct CachedInferenceSession {
 
 #[derive(Debug)]
 enum BackendSession {
+    #[cfg(feature = "backend-ort")]
     Ort(OrtInferenceSession),
+    #[cfg(feature = "backend-rten")]
+    Rten(Box<RtenInferenceSession>),
 }
 
 impl BackendSession {
@@ -53,18 +64,38 @@ impl BackendSession {
             });
         }
 
-        Ok(Self::Ort(OrtInferenceSession::new(settings)?))
+        match settings.backend {
+            #[cfg(feature = "backend-ort")]
+            InferenceBackend::Ort => Ok(Self::Ort(OrtInferenceSession::new(settings)?)),
+            #[cfg(feature = "backend-rten")]
+            InferenceBackend::Rten => {
+                Ok(Self::Rten(Box::new(RtenInferenceSession::new(settings)?)))
+            }
+        }
     }
 
     fn input_spec(&self) -> ModelInputSpec {
         match self {
+            #[cfg(feature = "backend-ort")]
             Self::Ort(session) => session.input_spec(),
+            #[cfg(feature = "backend-rten")]
+            Self::Rten(session) => session.input_spec(),
+            #[cfg(not(any(feature = "backend-ort", feature = "backend-rten")))]
+            _ => unreachable!("at least one inference backend feature must be enabled"),
         }
     }
 
     fn run_model(&self, input_array: Array4<f32>) -> OutlineResult<Array2<f32>> {
+        #[cfg(not(any(feature = "backend-ort", feature = "backend-rten")))]
+        let _ = &input_array;
+
         match self {
+            #[cfg(feature = "backend-ort")]
             Self::Ort(session) => session.run_model(input_array),
+            #[cfg(feature = "backend-rten")]
+            Self::Rten(session) => session.run_model(input_array),
+            #[cfg(not(any(feature = "backend-ort", feature = "backend-rten")))]
+            _ => unreachable!("at least one inference backend feature must be enabled"),
         }
     }
 }
@@ -110,12 +141,14 @@ impl CachedInferenceSession {
 }
 
 /// ONNX Runtime-backed model session.
+#[cfg(feature = "backend-ort")]
 #[derive(Debug)]
 struct OrtInferenceSession {
     session: Mutex<Session>,
     input_spec: ModelInputSpec,
 }
 
+#[cfg(feature = "backend-ort")]
 impl OrtInferenceSession {
     /// Create an ONNX Runtime-backed session.
     fn new(settings: &InferenceSettings) -> OutlineResult<Self> {
@@ -150,12 +183,50 @@ impl OrtInferenceSession {
     }
 }
 
+/// RTen-backed model session.
+#[cfg(feature = "backend-rten")]
+#[derive(Debug)]
+struct RtenInferenceSession {
+    model: rten::Model,
+    input_spec: ModelInputSpec,
+}
+
+#[cfg(feature = "backend-rten")]
+impl RtenInferenceSession {
+    fn new(settings: &InferenceSettings) -> OutlineResult<Self> {
+        let model = rten::Model::load_file(&settings.model_path)?;
+        let input_spec = determine_rten_model_input_spec(&model);
+
+        Ok(Self { model, input_spec })
+    }
+
+    fn input_spec(&self) -> ModelInputSpec {
+        self.input_spec
+    }
+
+    /// Execute the model for one preprocessed input array.
+    fn run_model(&self, input_array: Array4<f32>) -> OutlineResult<Array2<f32>> {
+        let shape = input_array.shape().to_vec();
+        let (data, offset) = input_array.into_raw_vec_and_offset();
+        if offset != Some(0) {
+            return Err(io::Error::other("preprocessed input array is not contiguous").into());
+        }
+
+        let input = rten::Value::from_shape(shape, data).map_err(io::Error::other)?;
+        let output = self.model.run_one(input.into(), None)?;
+        let matte = rten_value_to_array(output)?;
+        extract_matte_hw(matte.view())
+    }
+}
+
 /// Try to figure out the model input spec from the session and falls back to the default.
+#[cfg(feature = "backend-ort")]
 pub fn determine_model_input_spec(session: &Session) -> ModelInputSpec {
     infer_model_input_spec(session).unwrap_or(DEFAULT_MODEL_INPUT_SPEC)
 }
 
 /// Infer the model input spec from the ONNX session input tensor shape.
+#[cfg(feature = "backend-ort")]
 fn infer_model_input_spec(session: &Session) -> Option<ModelInputSpec> {
     let input = session.inputs().first()?;
     let shape = input.dtype().tensor_shape()?;
@@ -171,6 +242,48 @@ fn infer_model_input_spec(session: &Session) -> Option<ModelInputSpec> {
     }
 
     None
+}
+
+/// Try to figure out the model input spec from the RTen model and falls back to the default.
+#[cfg(feature = "backend-rten")]
+pub fn determine_rten_model_input_spec(model: &rten::Model) -> ModelInputSpec {
+    infer_rten_model_input_spec(model).unwrap_or(DEFAULT_MODEL_INPUT_SPEC)
+}
+
+/// Infer the model input spec from the RTen model input tensor shape.
+#[cfg(feature = "backend-rten")]
+fn infer_rten_model_input_spec(model: &rten::Model) -> Option<ModelInputSpec> {
+    let dims: Vec<i64> = model
+        .input_shape(0)?
+        .into_iter()
+        .map(|dim| match dim {
+            rten::Dimension::Fixed(value) => i64::try_from(value).unwrap_or(-1),
+            rten::Dimension::Symbolic(_) => -1,
+        })
+        .collect();
+
+    if dims.len() >= 4 {
+        if let Some(spec) = infer_nchw_spec(&dims) {
+            return Some(spec);
+        }
+        if let Some(spec) = infer_nhwc_spec(&dims) {
+            return Some(spec);
+        }
+    }
+
+    None
+}
+
+#[cfg(feature = "backend-rten")]
+fn rten_value_to_array(value: rten::Value) -> OutlineResult<ArrayD<f32>> {
+    if let Ok((shape, data)) = value.clone().into_shape_vec::<f32, 2>() {
+        return Ok(ArrayD::from_shape_vec(IxDyn(&shape), data)?);
+    }
+    if let Ok((shape, data)) = value.clone().into_shape_vec::<f32, 3>() {
+        return Ok(ArrayD::from_shape_vec(IxDyn(&shape), data)?);
+    }
+    let (shape, data) = value.into_shape_vec::<f32, 4>()?;
+    Ok(ArrayD::from_shape_vec(IxDyn(&shape), data)?)
 }
 
 /// Check for an NCHW layout and returns a matching spec when dimensions line up.

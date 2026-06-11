@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+#[cfg(feature = "backend-ort")]
 use ort::session::builder::SessionBuilder;
 use thiserror::Error;
 
@@ -16,8 +17,21 @@ pub type OutlineResult<T> = std::result::Result<T, OutlineError>;
 #[non_exhaustive]
 pub enum OutlineError {
     /// ONNX Runtime inference error.
+    #[cfg(feature = "backend-ort")]
     #[error("ONNX Runtime error: {0}")]
     Ort(#[from] ort::Error),
+    /// RTen model loading failed.
+    #[cfg(feature = "backend-rten")]
+    #[error("RTen model load failed: {0}")]
+    RtenLoad(#[from] rten::LoadError),
+    /// RTen model execution failed.
+    #[cfg(feature = "backend-rten")]
+    #[error("RTen model execution failed: {0}")]
+    RtenRun(#[from] rten::RunError),
+    /// RTen output conversion failed.
+    #[cfg(feature = "backend-rten")]
+    #[error("RTen output conversion failed: {0}")]
+    RtenValue(#[from] rten::TryFromValueError),
     /// Image loading, decoding, or encoding error.
     #[error("Image processing failed: {0}")]
     Image(#[from] image::ImageError),
@@ -47,6 +61,7 @@ pub enum OutlineError {
 }
 
 // Normalize SessionBuilder-specific ORT errors into OutlineError.
+#[cfg(feature = "backend-ort")]
 impl From<ort::Error<SessionBuilder>> for OutlineError {
     fn from(err: ort::Error<SessionBuilder>) -> Self {
         Self::Ort(err.into())

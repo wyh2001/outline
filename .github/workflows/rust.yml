@@ -31,6 +31,8 @@ jobs:
             args: "" # default runtime path via ort-download-binaries
           - name: app-features
             args: '--features "cli fetch-model"' # optional app-facing features without runtime-strategy conflicts
+          - name: rten-backend
+            args: "--no-default-features --features backend-rten"
 
     steps:
       - uses: actions/checkout@v4

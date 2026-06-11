@@ -26,8 +26,8 @@
 //!
 //! # Advanced: ONNX Runtime Strategy
 //!
-//! By default, `outline-core` enables the `ort-download-binaries` feature so ONNX Runtime is
-//! downloaded automatically for supported targets.
+//! By default, `outline-core` enables the `backend-ort` and `ort-download-binaries` features so
+//! ONNX Runtime is downloaded automatically for supported targets.
 //!
 //! If your environment needs a different runtime strategy, `outline-core` exposes the supported
 //! non-default paths directly. These runtime strategy features are mutually exclusive; enable at
@@ -39,10 +39,13 @@
 //! - [`runtime::ENV_ORT_LIB_LOCATION`]: link against a custom ONNX Runtime build
 //! - [`runtime::ENV_ORT_PREFER_DYNAMIC_LINK`]: prefer shared-library linking for a custom build
 //!
-//! Setting `default-features = false` only disables the download fallback; use it together with
-//! one of the non-default setups above.
+//! Setting `default-features = false` disables the default backend selection. Use it together with
+//! `backend-ort` plus one ONNX Runtime strategy, or with the experimental `backend-rten` backend.
 
 #![cfg_attr(docsrs, feature(doc_cfg))]
+
+#[cfg(not(any(feature = "backend-ort", feature = "backend-rten")))]
+compile_error!("enable at least one inference backend feature: `backend-ort` or `backend-rten`.");
 
 #[cfg(any(
     all(feature = "ort-download-binaries", feature = "ort-load-dynamic"),
@@ -60,12 +63,13 @@ mod geometry;
 mod inference;
 mod mask;
 mod matte;
+#[cfg(feature = "backend-ort")]
 pub mod runtime;
 mod vectorizer;
 
 #[doc(inline)]
 pub use crate::config::{
-    DEFAULT_MODEL_PATH, ENV_MODEL_PATH, ErosionBorderMode, InferenceSettings,
+    DEFAULT_MODEL_PATH, ENV_MODEL_PATH, ErosionBorderMode, InferenceBackend, InferenceSettings,
     MaskProcessingDefaults,
 };
 #[doc(inline)]
@@ -152,6 +156,15 @@ impl Outline {
                 ENV_MODEL_PATH
             ),
         )))
+    }
+
+    /// Set the inference backend.
+    pub fn with_backend(mut self, backend: InferenceBackend) -> Self {
+        if self.settings.backend != backend {
+            self.settings.backend = backend;
+            self.cached_session = Mutex::new(None);
+        }
+        self
     }
 
     /// Set the filter used to resize the input image for the model.

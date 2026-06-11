@@ -11,6 +11,19 @@ pub const ENV_MODEL_PATH: &str = "OUTLINE_MODEL_PATH";
 /// By default it points to `model.onnx` in the current working directory.
 pub const DEFAULT_MODEL_PATH: &str = "model.onnx";
 
+/// Inference backend used to execute the model.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum InferenceBackend {
+    /// Use ONNX Runtime through the `ort` crate.
+    #[cfg(feature = "backend-ort")]
+    #[default]
+    Ort,
+    /// Use the pure Rust RTen backend.
+    #[cfg(feature = "backend-rten")]
+    #[cfg_attr(not(feature = "backend-ort"), default)]
+    Rten,
+}
+
 /// Configuration for ONNX model inference and image preprocessing.
 ///
 /// Controls the model path, image resize filters for input/output, and threading behavior.
@@ -23,6 +36,8 @@ pub const DEFAULT_MODEL_PATH: &str = "model.onnx";
 pub struct InferenceSettings {
     /// Path to the ONNX model file.
     pub model_path: PathBuf,
+    /// Backend used to execute the model.
+    pub backend: InferenceBackend,
     /// Filter to use when resizing the input image for the model.
     pub input_resize_filter: FilterType,
     /// Filter to use when resizing the output matte to the original image size.
@@ -36,10 +51,17 @@ impl InferenceSettings {
     pub fn new(model_path: impl Into<PathBuf>) -> Self {
         Self {
             model_path: model_path.into(),
+            backend: InferenceBackend::default(),
             input_resize_filter: FilterType::Triangle,
             output_resize_filter: FilterType::Lanczos3,
             intra_threads: None,
         }
+    }
+
+    /// Set the inference backend.
+    pub fn with_backend(mut self, backend: InferenceBackend) -> Self {
+        self.backend = backend;
+        self
     }
 
     /// Set the model resize filter.
