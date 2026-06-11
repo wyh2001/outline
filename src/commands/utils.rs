@@ -36,6 +36,13 @@ fn resolve_model_path_impl(global: &GlobalOptions, cached: Option<&Path>) -> Pat
 
 /// The convenience function to build an Outline instance with the input global options.
 pub fn build_outline(global: &GlobalOptions) -> Outline {
+    #[cfg(all(feature = "backend-rten", not(feature = "backend-ort")))]
+    if global.intra_threads.is_some() {
+        eprintln!(
+            "Warning: --intra-threads is only supported by the ORT backend and will be ignored by the current backend."
+        );
+    }
+
     Outline::new(resolve_model_path(global))
         .with_input_resize_filter(global.input_resample_filter.into())
         .with_output_resize_filter(global.output_resample_filter.into())
