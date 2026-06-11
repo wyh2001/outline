@@ -70,7 +70,7 @@ mod vectorizer;
 #[doc(inline)]
 pub use crate::config::{
     DEFAULT_MODEL_PATH, ENV_MODEL_PATH, ErosionBorderMode, InferenceBackend, InferenceSettings,
-    MaskProcessingDefaults,
+    MaskProcessingDefaults, ModelInputSize,
 };
 #[doc(inline)]
 pub use crate::error::{OutlineError, OutlineResult};
@@ -164,6 +164,15 @@ impl Outline {
             self.settings.backend = backend;
             self.cached_session = Mutex::new(None);
         }
+        self
+    }
+
+    /// Override the image size used as model input.
+    ///
+    /// This bypasses the size inferred from the model; callers are responsible for choosing a
+    /// size the model supports.
+    pub fn with_model_input_size(mut self, width: usize, height: usize) -> Self {
+        self.settings.model_input_size = Some(ModelInputSize::new(width, height));
         self
     }
 
@@ -386,7 +395,9 @@ mod tests {
                 .get_or_init_cached_session()
                 .expect("should initialize cached session");
 
-            let outline = outline.with_input_resize_filter(FilterType::Nearest);
+            let outline = outline
+                .with_input_resize_filter(FilterType::Nearest)
+                .with_model_input_size(256, 256);
             let reused = outline
                 .get_or_init_cached_session()
                 .expect("should reuse cached session for non-session setting changes");

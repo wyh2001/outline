@@ -126,12 +126,14 @@ impl CachedInferenceSession {
     ) -> OutlineResult<(RgbImage, GrayImage)> {
         let orig_w = rgb_input.width();
         let orig_h = rgb_input.height();
+        let mut input_spec = self.backend.input_spec();
+        if let Some(size) = settings.model_input_size {
+            input_spec.width = size.width();
+            input_spec.height = size.height();
+        }
 
-        let input_array = preprocess_image_to_array(
-            &rgb_input,
-            settings.input_resize_filter,
-            self.backend.input_spec(),
-        )?;
+        let input_array =
+            preprocess_image_to_array(&rgb_input, settings.input_resize_filter, input_spec)?;
         let matte_hw = self.backend.run_model(input_array)?;
         let matte_orig = resize_matte(&matte_hw, orig_w, orig_h, settings.output_resize_filter)?;
         let raw_matte = array_to_gray_image(&matte_orig);
@@ -368,6 +370,13 @@ pub fn preprocess_image_to_array(
             format!("model height {} exceeds u32", spec.height),
         )
     })?;
+    if target_w == 0 || target_h == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "model input size must be non-zero",
+        )
+        .into());
+    }
 
     let resized = image::imageops::resize(rgb, target_w, target_h, filter);
     let w = resized.width() as usize;

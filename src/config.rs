@@ -24,6 +24,28 @@ pub enum InferenceBackend {
     Rten,
 }
 
+/// Width and height used to override the model-declared input size.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ModelInputSize {
+    width: usize,
+    height: usize,
+}
+
+impl ModelInputSize {
+    pub fn new(width: usize, height: usize) -> Self {
+        assert!(width > 0 && height > 0, "model input size must be non-zero");
+        Self { width, height }
+    }
+
+    pub fn width(&self) -> usize {
+        self.width
+    }
+
+    pub fn height(&self) -> usize {
+        self.height
+    }
+}
+
 /// Configuration for ONNX model inference and image preprocessing.
 ///
 /// Controls the model path, image resize filters for input/output, and threading behavior.
@@ -42,6 +64,10 @@ pub struct InferenceSettings {
     pub input_resize_filter: FilterType,
     /// Filter to use when resizing the output matte to the original image size.
     pub output_resize_filter: FilterType,
+    /// Override for the image size used as model input.
+    ///
+    /// When set, callers are responsible for choosing a size the model supports.
+    pub model_input_size: Option<ModelInputSize>,
     /// Number of intra-op threads for the inference.
     pub intra_threads: Option<usize>,
 }
@@ -54,6 +80,7 @@ impl InferenceSettings {
             backend: InferenceBackend::default(),
             input_resize_filter: FilterType::Triangle,
             output_resize_filter: FilterType::Lanczos3,
+            model_input_size: None,
             intra_threads: None,
         }
     }
@@ -61,6 +88,15 @@ impl InferenceSettings {
     /// Set the inference backend.
     pub fn with_backend(mut self, backend: InferenceBackend) -> Self {
         self.backend = backend;
+        self
+    }
+
+    /// Override the image size used as model input.
+    ///
+    /// This bypasses the size inferred from the model; callers are responsible for choosing a
+    /// size the model supports.
+    pub fn with_model_input_size(mut self, width: usize, height: usize) -> Self {
+        self.model_input_size = Some(ModelInputSize::new(width, height));
         self
     }
 
