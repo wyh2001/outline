@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use image::imageops::FilterType;
 
@@ -57,19 +57,19 @@ impl ModelInputSize {
 #[non_exhaustive]
 pub struct InferenceSettings {
     /// Path to the ONNX model file.
-    pub model_path: PathBuf,
+    model_path: PathBuf,
     /// Backend used to execute the model.
-    pub backend: InferenceBackend,
+    backend: InferenceBackend,
     /// Filter to use when resizing the input image for the model.
-    pub input_resize_filter: FilterType,
+    input_resize_filter: FilterType,
     /// Filter to use when resizing the output matte to the original image size.
-    pub output_resize_filter: FilterType,
+    output_resize_filter: FilterType,
     /// Override for the image size used as model input.
     ///
     /// When set, callers are responsible for choosing a size the model supports.
-    pub model_input_size: Option<ModelInputSize>,
-    /// Number of intra-op threads for the inference.
-    pub intra_threads: Option<usize>,
+    model_input_size: Option<ModelInputSize>,
+    /// Number of intra-op threads for the inference (ORT backend).
+    intra_threads: Option<usize>,
 }
 
 impl InferenceSettings {
@@ -83,6 +83,38 @@ impl InferenceSettings {
             model_input_size: None,
             intra_threads: None,
         }
+    }
+
+    /// Path to the ONNX model file.
+    pub fn model_path(&self) -> &Path {
+        &self.model_path
+    }
+
+    /// Backend used to execute the model.
+    pub fn backend(&self) -> InferenceBackend {
+        self.backend
+    }
+
+    /// Filter to use when resizing the input image for the model.
+    pub fn input_resize_filter(&self) -> FilterType {
+        self.input_resize_filter
+    }
+
+    /// Filter to use when resizing the output matte to the original image size.
+    pub fn output_resize_filter(&self) -> FilterType {
+        self.output_resize_filter
+    }
+
+    /// Override for the image size used as model input.
+    ///
+    /// When set, callers are responsible for choosing a size the model supports.
+    pub fn model_input_size(&self) -> Option<ModelInputSize> {
+        self.model_input_size
+    }
+
+    /// Number of intra-op threads for the inference (ORT backend).
+    pub fn intra_threads(&self) -> Option<usize> {
+        self.intra_threads
     }
 
     /// Set the inference backend.
@@ -112,7 +144,7 @@ impl InferenceSettings {
         self
     }
 
-    /// Set the number of intra-op threads for the inference.
+    /// Set the number of intra-op threads for the inference (ORT backend).
     pub fn with_intra_threads(mut self, intra_threads: Option<usize>) -> Self {
         self.intra_threads = intra_threads;
         self

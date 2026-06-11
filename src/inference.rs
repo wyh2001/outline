@@ -58,13 +58,13 @@ enum BackendSession {
 
 impl BackendSession {
     fn new(settings: &InferenceSettings) -> OutlineResult<Self> {
-        if !settings.model_path.is_file() {
+        if !settings.model_path().is_file() {
             return Err(OutlineError::ModelNotFound {
-                path: settings.model_path.clone(),
+                path: settings.model_path().to_path_buf(),
             });
         }
 
-        match settings.backend {
+        match settings.backend() {
             #[cfg(feature = "backend-ort")]
             InferenceBackend::Ort => Ok(Self::Ort(OrtInferenceSession::new(settings)?)),
             #[cfg(feature = "backend-rten")]
@@ -127,15 +127,15 @@ impl CachedInferenceSession {
         let orig_w = rgb_input.width();
         let orig_h = rgb_input.height();
         let mut input_spec = self.backend.input_spec();
-        if let Some(size) = settings.model_input_size {
+        if let Some(size) = settings.model_input_size() {
             input_spec.width = size.width();
             input_spec.height = size.height();
         }
 
         let input_array =
-            preprocess_image_to_array(&rgb_input, settings.input_resize_filter, input_spec)?;
+            preprocess_image_to_array(&rgb_input, settings.input_resize_filter(), input_spec)?;
         let matte_hw = self.backend.run_model(input_array)?;
-        let matte_orig = resize_matte(&matte_hw, orig_w, orig_h, settings.output_resize_filter)?;
+        let matte_orig = resize_matte(&matte_hw, orig_w, orig_h, settings.output_resize_filter())?;
         let raw_matte = array_to_gray_image(&matte_orig);
 
         Ok((rgb_input, raw_matte))
@@ -156,10 +156,10 @@ impl OrtInferenceSession {
     fn new(settings: &InferenceSettings) -> OutlineResult<Self> {
         let mut builder =
             Session::builder()?.with_optimization_level(GraphOptimizationLevel::Level3)?;
-        if let Some(n) = settings.intra_threads {
+        if let Some(n) = settings.intra_threads() {
             builder = builder.with_intra_threads(n)?;
         }
-        let session = builder.commit_from_file(&settings.model_path)?;
+        let session = builder.commit_from_file(settings.model_path())?;
         let input_spec = determine_model_input_spec(&session);
 
         Ok(Self {
@@ -196,7 +196,7 @@ struct RtenInferenceSession {
 #[cfg(feature = "backend-rten")]
 impl RtenInferenceSession {
     fn new(settings: &InferenceSettings) -> OutlineResult<Self> {
-        let model = rten::Model::load_file(&settings.model_path)?;
+        let model = rten::Model::load_file(settings.model_path())?;
         let input_spec = determine_rten_model_input_spec(&model);
 
         Ok(Self { model, input_spec })

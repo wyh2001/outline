@@ -160,8 +160,8 @@ impl Outline {
 
     /// Set the inference backend.
     pub fn with_backend(mut self, backend: InferenceBackend) -> Self {
-        if self.settings.backend != backend {
-            self.settings.backend = backend;
+        if self.settings.backend() != backend {
+            self.settings = self.settings.with_backend(backend);
             self.cached_session = Mutex::new(None);
         }
         self
@@ -172,26 +172,26 @@ impl Outline {
     /// This bypasses the size inferred from the model; callers are responsible for choosing a
     /// size the model supports.
     pub fn with_model_input_size(mut self, width: usize, height: usize) -> Self {
-        self.settings.model_input_size = Some(ModelInputSize::new(width, height));
+        self.settings = self.settings.with_model_input_size(width, height);
         self
     }
 
     /// Set the filter used to resize the input image for the model.
     pub fn with_input_resize_filter(mut self, filter: FilterType) -> Self {
-        self.settings.input_resize_filter = filter;
+        self.settings = self.settings.with_input_resize_filter(filter);
         self
     }
 
     /// Set the filter used to resize the output matte to the original image size.
     pub fn with_output_resize_filter(mut self, filter: FilterType) -> Self {
-        self.settings.output_resize_filter = filter;
+        self.settings = self.settings.with_output_resize_filter(filter);
         self
     }
 
     /// Set the number of intra-op threads for the inference.
     pub fn with_intra_threads(mut self, intra_threads: Option<usize>) -> Self {
-        if self.settings.intra_threads != intra_threads {
-            self.settings.intra_threads = intra_threads;
+        if self.settings.intra_threads() != intra_threads {
+            self.settings = self.settings.with_intra_threads(intra_threads);
             self.cached_session = Mutex::new(None);
         }
         self
@@ -287,7 +287,7 @@ mod tests {
         fn user_value_is_stored_directly() {
             let outline = Outline::new("/explicit/model.onnx");
             assert_eq!(
-                outline.settings.model_path,
+                outline.settings.model_path(),
                 PathBuf::from("/explicit/model.onnx")
             );
         }
@@ -299,7 +299,7 @@ mod tests {
             unsafe { std::env::set_var(ENV_MODEL_PATH, "env.onnx") };
             let outline = Outline::new("user.onnx");
             unsafe { std::env::remove_var(ENV_MODEL_PATH) };
-            assert_eq!(outline.settings.model_path, PathBuf::from("user.onnx"));
+            assert_eq!(outline.settings.model_path(), PathBuf::from("user.onnx"));
         }
     }
 
@@ -313,7 +313,10 @@ mod tests {
             unsafe { std::env::set_var(ENV_MODEL_PATH, "/from/env.onnx") };
             let outline = Outline::from_env_or_default();
             unsafe { std::env::remove_var(ENV_MODEL_PATH) };
-            assert_eq!(outline.settings.model_path, PathBuf::from("/from/env.onnx"));
+            assert_eq!(
+                outline.settings.model_path(),
+                PathBuf::from("/from/env.onnx")
+            );
         }
 
         #[test]
@@ -323,7 +326,7 @@ mod tests {
             unsafe { std::env::remove_var(ENV_MODEL_PATH) };
             let outline = Outline::from_env_or_default();
             assert_eq!(
-                outline.settings.model_path,
+                outline.settings.model_path(),
                 PathBuf::from(DEFAULT_MODEL_PATH)
             );
         }
@@ -340,7 +343,10 @@ mod tests {
             let result = Outline::try_from_env();
             unsafe { std::env::remove_var(ENV_MODEL_PATH) };
             let outline = result.expect("should succeed when env is set");
-            assert_eq!(outline.settings.model_path, PathBuf::from("/from/env.onnx"));
+            assert_eq!(
+                outline.settings.model_path(),
+                PathBuf::from("/from/env.onnx")
+            );
         }
 
         #[test]
