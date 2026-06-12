@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.2.0] - 2026-06-12
+
+- Breaking: `save()`, `foreground()`, and `trace()` no longer skip chained mask operations.
+- Breaking: replace `MaskProcessingOptions` with `MaskProcessingDefaults` and `MaskPipeline`.
+- Breaking: make `InferenceSettings` fields private; use getters and `with_*` builders.
+- Breaking: mark `OutlineError` as non-exhaustive.
+- Breaking: redesign CLI mask-processing flags around ordered `--threshold` steps; replace `--binary` and `--mask-threshold`.
+- Add experimental RTen backend as a pure-Rust ONNX inference option.
+- Add erosion support to mask processing.
+- Add `dimensions()`, `bounding_box()`, `pad()`, `crop_to_content()`, and `colorize()` helpers.
+- Add support for running inference from in-memory images.
+- Add support for overriding model input size.
+- Make ORT runtime strategy features additive.
+- Deprecate ambiguous `raw()` accessors on mask and matte handles; use `to_raw_mask()` / `to_raw_matte()` or `as_raw_mask()` / `as_raw_matte()` instead.
+- Reject invalid mask processing parameters earlier: blur sigma must be positive, and dilation/erosion radii must be non-negative.
+
 ## [0.1.2] - 2026-04-08
 
 - Add support for custom ONNX Runtime configurations.
