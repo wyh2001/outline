@@ -23,14 +23,13 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        # ONNX Runtime strategy features are mutually exclusive, so the regular build matrix only
-        # covers legal app-facing combinations. Dedicated jobs below validate each runtime setup
-        # and assert that illegal combinations fail to compile.
         include:
           - name: default
             args: "" # default runtime path via ort-download-binaries
           - name: app-features
-            args: '--features "cli fetch-model"' # optional app-facing features without runtime-strategy conflicts
+            args: '--features "cli fetch-model"'
+          - name: all-features
+            args: "--all-features"
           - name: rten-backend
             args: "--no-default-features --features backend-rten"
 
@@ -43,34 +42,11 @@ jobs:
       - name: Build
         run: cargo build --verbose ${{ matrix.args }}
       - name: Run tests
+        if: matrix.name != 'all-features'
         run: cargo test --verbose ${{ matrix.args }}
-
-  invalid-runtime-combinations:
-    name: invalid runtime combo (${{ matrix.name }})
-    runs-on: ubuntu-latest
-    env:
-      # Only validate compilation errors here; avoid any runtime downloads.
-      ORT_SKIP_DOWNLOAD: "1"
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: download+dynamic
-            features: "ort-download-binaries ort-load-dynamic"
-          - name: download+pkg-config
-            features: "ort-download-binaries ort-pkg-config"
-          - name: dynamic+pkg-config
-            features: "ort-load-dynamic ort-pkg-config"
-
-    steps:
-      - uses: actions/checkout@v4
-      - name: Verify mutually exclusive runtime features fail to compile
-        run: |
-          set -euxo pipefail
-          if cargo check --verbose --no-default-features --features "${{ matrix.features }}"; then
-            echo "expected cargo check to fail for mutually exclusive runtime features: ${{ matrix.features }}" >&2
-            exit 1
-          fi
+      - name: Compile tests
+        if: matrix.name == 'all-features'
+        run: cargo test --verbose ${{ matrix.args }} --no-run
 
   prepare-ort-runtime:
     runs-on: ubuntu-latest

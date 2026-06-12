@@ -30,8 +30,10 @@
 //! ONNX Runtime is downloaded automatically for supported targets.
 //!
 //! If your environment needs a different runtime strategy, `outline-core` exposes the supported
-//! non-default paths directly. These runtime strategy features are mutually exclusive; enable at
-//! most one of `ort-download-binaries`, `ort-load-dynamic`, or `ort-pkg-config`:
+//! non-default paths directly. These features are additive. If `ort-load-dynamic` is enabled,
+//! `ort` skips build-time linking and loads ONNX Runtime at runtime. Otherwise, build-time
+//! linking uses the enabled inputs in order: `ort-pkg-config`, `runtime::ENV_ORT_LIB_LOCATION`,
+//! then `ort-download-binaries`.
 //! - `ort-pkg-config`: discover a system ONNX Runtime via `pkg-config`
 //! - `ort-load-dynamic`: load a `.dll`/`.so`/`.dylib` at runtime via the
 //!   `runtime::init_onnx_runtime_from` helper in the [`runtime`] module
@@ -46,15 +48,6 @@
 
 #[cfg(not(any(feature = "backend-ort", feature = "backend-rten")))]
 compile_error!("enable at least one inference backend feature: `backend-ort` or `backend-rten`.");
-
-#[cfg(any(
-    all(feature = "ort-download-binaries", feature = "ort-load-dynamic"),
-    all(feature = "ort-download-binaries", feature = "ort-pkg-config"),
-    all(feature = "ort-load-dynamic", feature = "ort-pkg-config"),
-))]
-compile_error!(
-    "ONNX Runtime strategy features are mutually exclusive; enable at most one of `ort-download-binaries`, `ort-load-dynamic`, or `ort-pkg-config`."
-);
 
 mod config;
 mod error;
