@@ -24,25 +24,25 @@ pub enum InferenceBackend {
     Rten,
 }
 
-/// Width and height used to override the model-declared input size.
+/// Height and width used to override the model-declared input size.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ModelInputSize {
-    width: usize,
     height: usize,
+    width: usize,
 }
 
 impl ModelInputSize {
-    pub fn new(width: usize, height: usize) -> Self {
-        assert!(width > 0 && height > 0, "model input size must be non-zero");
-        Self { width, height }
-    }
-
-    pub fn width(&self) -> usize {
-        self.width
+    pub fn new(height: usize, width: usize) -> Self {
+        assert!(height > 0 && width > 0, "model input size must be non-zero");
+        Self { height, width }
     }
 
     pub fn height(&self) -> usize {
         self.height
+    }
+
+    pub fn width(&self) -> usize {
+        self.width
     }
 }
 
@@ -127,8 +127,8 @@ impl InferenceSettings {
     ///
     /// This bypasses the size inferred from the model; callers are responsible for choosing a
     /// size the model supports.
-    pub fn with_model_input_size(mut self, width: usize, height: usize) -> Self {
-        self.model_input_size = Some(ModelInputSize::new(width, height));
+    pub fn with_model_input_size(mut self, height: usize, width: usize) -> Self {
+        self.model_input_size = Some(ModelInputSize::new(height, width));
         self
     }
 

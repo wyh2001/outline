@@ -164,8 +164,8 @@ impl Outline {
     ///
     /// This bypasses the size inferred from the model; callers are responsible for choosing a
     /// size the model supports.
-    pub fn with_model_input_size(mut self, width: usize, height: usize) -> Self {
-        self.settings = self.settings.with_model_input_size(width, height);
+    pub fn with_model_input_size(mut self, height: usize, width: usize) -> Self {
+        self.settings = self.settings.with_model_input_size(height, width);
         self
     }
 

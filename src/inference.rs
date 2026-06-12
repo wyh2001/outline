@@ -31,14 +31,14 @@ pub enum ChannelLayout {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ModelInputSpec {
-    pub width: usize,
     pub height: usize,
+    pub width: usize,
     pub layout: ChannelLayout,
 }
 
 pub const DEFAULT_MODEL_INPUT_SPEC: ModelInputSpec = ModelInputSpec {
-    width: 320,
     height: 320,
+    width: 320,
     layout: ChannelLayout::Nchw,
 };
 
@@ -299,8 +299,8 @@ fn infer_nchw_spec(dims: &[i64]) -> Option<ModelInputSpec> {
     let height = positive_dim_to_usize(height)?;
     let width = positive_dim_to_usize(width)?;
     Some(ModelInputSpec {
-        width,
         height,
+        width,
         layout: ChannelLayout::Nchw,
     })
 }
@@ -316,8 +316,8 @@ fn infer_nhwc_spec(dims: &[i64]) -> Option<ModelInputSpec> {
     let height = positive_dim_to_usize(height)?;
     let width = positive_dim_to_usize(width)?;
     Some(ModelInputSpec {
-        width,
         height,
+        width,
         layout: ChannelLayout::Nhwc,
     })
 }
