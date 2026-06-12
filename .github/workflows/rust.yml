@@ -18,6 +18,17 @@ env:
   ORT_SHA256: 3a211fbea252c1e66290658f1b735b772056149f28321e71c308942cdb54b747
 
 jobs:
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check formatting
+        run: cargo fmt --all --check
+      - name: Run clippy
+        run: cargo clippy --all-targets --features "cli fetch-model" -- -D warnings
+
   build:
     name: build (${{ matrix.name }})
     runs-on: ubuntu-latest
