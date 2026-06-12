@@ -37,12 +37,12 @@ pub enum MaskOperation {
     },
     /// Expand white mask regions.
     Dilate {
-        /// Dilation radius in pixels.
+        /// Dilation radius in pixels. Must be non-negative and not NaN.
         radius: f32,
     },
     /// Shrink white mask regions.
     Erode {
-        /// Erosion radius in pixels.
+        /// Erosion radius in pixels. Must be non-negative and not NaN.
         radius: f32,
         /// How pixels outside the image bounds are treated.
         border_mode: ErosionBorderMode,
@@ -59,7 +59,8 @@ impl MaskOperation {
     ///
     /// # Panics
     ///
-    /// Panics if this is a blur operation whose `sigma` is not greater than zero.
+    /// Panics if this is a blur operation whose `sigma` is not greater than zero, or a dilation or
+    /// erosion operation whose radius is negative or NaN.
     pub fn apply(&self, input: &GrayImage) -> GrayImage {
         match self {
             MaskOperation::Blur { sigma } => gaussian_blur_f32(input, *sigma),
@@ -78,7 +79,8 @@ impl MaskOperation {
 ///
 /// # Panics
 ///
-/// Panics if `operations` contains a blur operation whose `sigma` is not greater than zero.
+/// Panics if `operations` contains a blur operation whose `sigma` is not greater than zero, or a
+/// dilation or erosion operation whose radius is negative or NaN.
 pub fn apply_operations(source: &GrayImage, operations: &[MaskOperation]) -> GrayImage {
     let mut current = source.clone();
     for op in operations {
@@ -110,7 +112,12 @@ impl MaskPipeline {
     }
 
     /// Add a blur operation with a custom sigma.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `sigma` is not greater than zero.
     pub fn blur_with(mut self, sigma: f32) -> Self {
+        assert!(sigma > 0.0, "sigma must be > 0.0");
         self.operations.push(MaskOperation::Blur { sigma });
         self
     }
@@ -122,18 +129,38 @@ impl MaskPipeline {
     }
 
     /// Add a dilation operation with a custom radius.
+    ///
+    /// A radius of zero leaves the mask unchanged.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `radius` is negative or NaN.
     pub fn dilate_with(mut self, radius: f32) -> Self {
+        assert_nonnegative_radius(radius);
         self.operations.push(MaskOperation::Dilate { radius });
         self
     }
 
     /// Add an erosion operation with the default boundary behavior.
+    ///
+    /// A radius of zero leaves the mask unchanged.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `radius` is negative or NaN.
     pub fn erode_with(self, radius: f32) -> Self {
         self.erode_with_border_mode(radius, ErosionBorderMode::default())
     }
 
     /// Add an erosion operation with a custom radius and boundary behavior.
+    ///
+    /// A radius of zero leaves the mask unchanged.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `radius` is negative or NaN.
     pub fn erode_with_border_mode(mut self, radius: f32, border_mode: ErosionBorderMode) -> Self {
+        assert_nonnegative_radius(radius);
         self.operations.push(MaskOperation::Erode {
             radius,
             border_mode,
@@ -200,8 +227,21 @@ pub fn threshold_mask(gray: &GrayImage, thr: u8) -> GrayImage {
     ip_threshold(gray, thr, ThresholdType::Binary)
 }
 
+fn assert_nonnegative_radius(radius: f32) {
+    assert!(radius >= 0.0, "radius must be >= 0.0");
+}
+
+/// Dilate a binary mask by a Euclidean radius.
+///
+/// A radius of zero leaves the mask unchanged.
+///
+/// # Panics
+///
+/// Panics if `r` is negative or NaN.
 pub fn dilate_euclidean(mask_bin: &GrayImage, r: f32) -> GrayImage {
-    if r <= 0.0 {
+    assert_nonnegative_radius(r);
+
+    if r == 0.0 {
         return mask_bin.clone();
     }
 
@@ -218,12 +258,20 @@ pub fn dilate_euclidean(mask_bin: &GrayImage, r: f32) -> GrayImage {
 }
 
 /// Erode a binary mask by the provided radius using the requested boundary behavior.
+///
+/// A radius of zero leaves the mask unchanged.
+///
+/// # Panics
+///
+/// Panics if `r` is negative or NaN.
 pub fn erode_euclidean_with_border_mode(
     mask_bin: &GrayImage,
     r: f32,
     border_mode: ErosionBorderMode,
 ) -> GrayImage {
-    if r <= 0.0 {
+    assert_nonnegative_radius(r);
+
+    if r == 0.0 {
         return mask_bin.clone();
     }
 
@@ -261,6 +309,10 @@ pub fn invert_mask(mask: &GrayImage) -> GrayImage {
 /// Fill holes in a binary mask using a flood-fill algorithm from the borders.
 pub fn fill_mask_holes(mask: &GrayImage, threshold: u8) -> GrayImage {
     let (w, h) = mask.dimensions();
+    if w == 0 || h == 0 {
+        return mask.clone();
+    }
+
     let (w_usize, h_usize) = (w as usize, h as usize);
     let mut visited = vec![false; w_usize * h_usize];
     let mut queue = VecDeque::new();
@@ -586,14 +638,24 @@ impl MaskHandle {
     }
 
     /// Add a blur operation using the default sigma.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the configured default blur sigma is not greater than zero.
     pub fn blur(mut self) -> Self {
         let sigma = self.mask_processing_defaults.blur_sigma;
+        assert!(sigma > 0.0, "sigma must be > 0.0");
         self.operations.push(MaskOperation::Blur { sigma });
         self
     }
 
     /// Add a blur operation with a custom sigma.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `sigma` is not greater than zero.
     pub fn blur_with(mut self, sigma: f32) -> Self {
+        assert!(sigma > 0.0, "sigma must be > 0.0");
         self.operations.push(MaskOperation::Blur { sigma });
         self
     }
@@ -615,8 +677,15 @@ impl MaskHandle {
     ///
     /// **Note**: Dilation typically works best on binary masks. If this mask is still grayscale,
     /// consider calling [`threshold`](MaskHandle::threshold) first.
+    ///
+    /// A radius of zero leaves the mask unchanged.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the configured default dilation radius is negative or NaN.
     pub fn dilate(mut self) -> Self {
         let radius = self.mask_processing_defaults.dilation_radius;
+        assert_nonnegative_radius(radius);
         self.operations.push(MaskOperation::Dilate { radius });
         self
     }
@@ -625,7 +694,14 @@ impl MaskHandle {
     ///
     /// **Note**: Dilation typically works best on binary masks. If this mask is still grayscale,
     /// consider calling [`threshold`](MaskHandle::threshold) first.
+    ///
+    /// A radius of zero leaves the mask unchanged.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `radius` is negative or NaN.
     pub fn dilate_with(mut self, radius: f32) -> Self {
+        assert_nonnegative_radius(radius);
         self.operations.push(MaskOperation::Dilate { radius });
         self
     }
@@ -634,8 +710,15 @@ impl MaskHandle {
     ///
     /// **Note**: Erosion typically works best on binary masks. If this mask is still grayscale,
     /// consider calling [`threshold`](MaskHandle::threshold) first.
+    ///
+    /// A radius of zero leaves the mask unchanged.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the configured default erosion radius is negative or NaN.
     pub fn erode(mut self) -> Self {
         let radius = self.mask_processing_defaults.erosion_radius;
+        assert_nonnegative_radius(radius);
         let border_mode = self.mask_processing_defaults.erosion_border_mode;
         self.operations.push(MaskOperation::Erode {
             radius,
@@ -648,8 +731,15 @@ impl MaskHandle {
     ///
     /// **Note**: Erosion typically works best on binary masks. If this mask is still grayscale,
     /// consider calling [`threshold`](MaskHandle::threshold) first.
+    ///
+    /// A radius of zero leaves the mask unchanged.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `radius` is negative or NaN.
     pub fn erode_with(mut self, radius: f32) -> Self {
         let border_mode = self.mask_processing_defaults.erosion_border_mode;
+        assert_nonnegative_radius(radius);
         self.operations.push(MaskOperation::Erode {
             radius,
             border_mode,
@@ -661,7 +751,14 @@ impl MaskHandle {
     ///
     /// **Note**: Erosion typically works best on binary masks. If this mask is still grayscale,
     /// consider calling [`threshold`](MaskHandle::threshold) first.
+    ///
+    /// A radius of zero leaves the mask unchanged.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `radius` is negative or NaN.
     pub fn erode_with_border_mode(mut self, radius: f32, border_mode: ErosionBorderMode) -> Self {
+        assert_nonnegative_radius(radius);
         self.operations.push(MaskOperation::Erode {
             radius,
             border_mode,
@@ -1111,6 +1208,13 @@ mod tests {
             }
 
             #[test]
+            fn empty_image_is_unchanged() {
+                let input = GrayImage::new(0, 0);
+                let result = fill_mask_holes(&input, 128);
+                assert_eq!(result.dimensions(), (0, 0));
+            }
+
+            #[test]
             fn diagonal_only_connection_not_traversed() {
                 // 4-connectivity: diagonal doesn't count as connected
                 // W W W
@@ -1266,15 +1370,10 @@ mod tests {
             }
 
             #[test]
-            fn negative_radius_preserves_mask() {
-                let mut input = gray_image(3, 3, 0);
-                input.put_pixel(0, 0, Luma([255]));
-                input.put_pixel(1, 1, Luma([255]));
-                input.put_pixel(2, 2, Luma([255]));
-
-                let result = dilate_euclidean(&input, -1.0);
-
-                assert_eq!(result.as_raw(), input.as_raw());
+            #[should_panic(expected = "radius must be >= 0.0")]
+            fn negative_radius_panics() {
+                let input = gray_image(3, 3, 0);
+                let _ = dilate_euclidean(&input, -1.0);
             }
         }
 
@@ -1369,16 +1468,10 @@ mod tests {
         }
 
         #[test]
-        fn erosion_negative_radius_preserves_mask() {
-            let mut input = gray_image(3, 3, 0);
-            input.put_pixel(0, 0, Luma([255]));
-            input.put_pixel(1, 1, Luma([255]));
-            input.put_pixel(2, 2, Luma([255]));
-
-            let result =
-                erode_euclidean_with_border_mode(&input, -1.0, ErosionBorderMode::default());
-
-            assert_eq!(result.as_raw(), input.as_raw());
+        #[should_panic(expected = "radius must be >= 0.0")]
+        fn erosion_negative_radius_panics() {
+            let input = gray_image(3, 3, 0);
+            let _ = erode_euclidean_with_border_mode(&input, -1.0, ErosionBorderMode::default());
         }
 
         #[test]
