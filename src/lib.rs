@@ -188,7 +188,7 @@ impl Outline {
         self
     }
 
-    /// Set the number of intra-op threads for the inference.
+    /// Set the number of intra-op threads for the inference (ORT backend).
     pub fn with_intra_threads(mut self, intra_threads: Option<usize>) -> Self {
         if self.settings.intra_threads() != intra_threads {
             self.settings = self.settings.with_intra_threads(intra_threads);
