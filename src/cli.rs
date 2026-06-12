@@ -6,7 +6,9 @@ use clap::{
     error::ErrorKind,
 };
 use image::imageops::FilterType;
-use outline::{ErosionBorderMode, MaskPipeline, MaskProcessingDefaults, TraceOptions};
+use outline::{
+    ErosionBorderMode, MaskPipeline, MaskProcessingDefaults, ModelInputSize, TraceOptions,
+};
 use visioncortex::PathSimplifyMode;
 use vtracer::{ColorMode, Hierarchical};
 
@@ -77,6 +79,14 @@ pub struct GlobalOptions {
     /// Intra-op thread count for ORT (None to let ORT decide)
     #[arg(long, global = true)]
     pub intra_threads: Option<usize>,
+    /// Override model input size when it cannot be inferred
+    #[arg(
+        long = "model-input-size",
+        value_name = "HEIGHTxWIDTH",
+        value_parser = parse_model_input_size,
+        global = true
+    )]
+    pub model_input_size: Option<ModelInputSize>,
     /// Filter used when resizing the input before inference
     #[arg(long = "input-resample-filter", value_enum, default_value_t = ResampleFilter::Triangle, global = true)]
     pub input_resample_filter: ResampleFilter,
@@ -474,6 +484,27 @@ fn parse_mask_threshold(value: &str) -> Result<u8, String> {
     ))
 }
 
+fn parse_model_input_size(value: &str) -> Result<ModelInputSize, String> {
+    let Some((height, width)) = value.split_once(['x', 'X']) else {
+        return Err(format!(
+            "model input size must be HEIGHTxWIDTH, got `{value}`"
+        ));
+    };
+
+    let height = height
+        .parse::<usize>()
+        .map_err(|_| format!("model input height must be an integer, got `{height}`"))?;
+    let width = width
+        .parse::<usize>()
+        .map_err(|_| format!("model input width must be an integer, got `{width}`"))?;
+
+    if height == 0 || width == 0 {
+        return Err(format!("model input size must be non-zero, got `{value}`"));
+    }
+
+    Ok(ModelInputSize::new(height, width))
+}
+
 /// The argument to specify which alpha source to use.
 #[derive(Clone, Copy, Debug, ValueEnum)]
 pub enum AlphaFromArg {
@@ -709,6 +740,42 @@ mod tests {
                     prop_assert_eq!(result, v);
                 }
             }
+        }
+    }
+
+    mod parse_model_input_size {
+        use super::*;
+
+        #[test]
+        fn parses_taller_size() {
+            let size = parse_model_input_size("1024x768").unwrap();
+            assert_eq!(size.height(), 1024);
+            assert_eq!(size.width(), 768);
+        }
+
+        #[test]
+        fn parses_wider_size() {
+            let size = parse_model_input_size("768x1024").unwrap();
+            assert_eq!(size.height(), 768);
+            assert_eq!(size.width(), 1024);
+        }
+
+        #[test]
+        fn parses_uppercase_separator() {
+            let size = parse_model_input_size("768X1024").unwrap();
+            assert_eq!(size.height(), 768);
+            assert_eq!(size.width(), 1024);
+        }
+
+        #[test]
+        fn rejects_missing_separator() {
+            assert!(parse_model_input_size("1024").is_err());
+        }
+
+        #[test]
+        fn rejects_zero_dimension() {
+            assert!(parse_model_input_size("0x1024").is_err());
+            assert!(parse_model_input_size("1024x0").is_err());
         }
     }
 
@@ -1870,6 +1937,21 @@ mod tests {
                         cli.global.output_resample_filter,
                         ResampleFilter::Nearest
                     ));
+                }
+
+                #[test]
+                fn model_input_size_override() {
+                    let cli = Cli::try_parse_from([
+                        "outline",
+                        "mask",
+                        "in.png",
+                        "--model-input-size",
+                        "1024x768",
+                    ])
+                    .unwrap();
+                    let size = cli.global.model_input_size.unwrap();
+                    assert_eq!(size.height(), 1024);
+                    assert_eq!(size.width(), 768);
                 }
 
                 #[test]

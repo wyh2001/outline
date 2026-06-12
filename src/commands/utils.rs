@@ -43,10 +43,16 @@ pub fn build_outline(global: &GlobalOptions) -> Outline {
         );
     }
 
-    Outline::new(resolve_model_path(global))
+    let outline = Outline::new(resolve_model_path(global))
         .with_input_resize_filter(global.input_resample_filter.into())
         .with_output_resize_filter(global.output_resample_filter.into())
-        .with_intra_threads(global.intra_threads)
+        .with_intra_threads(global.intra_threads);
+
+    if let Some(size) = global.model_input_size {
+        outline.with_model_input_size(size.height(), size.width())
+    } else {
+        outline
+    }
 }
 
 /// Derive a variant file path by appending a suffix before the extension.
@@ -161,6 +167,7 @@ mod tests {
             GlobalOptions {
                 model,
                 intra_threads: None,
+                model_input_size: None,
                 input_resample_filter: ResampleFilter::Triangle,
                 output_resample_filter: ResampleFilter::Lanczos3,
             }
