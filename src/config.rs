@@ -33,15 +33,22 @@ pub struct ModelInputSize {
 }
 
 impl ModelInputSize {
+    /// Creates a height/width override for model input tensors.
+    ///
+    /// # Panics
+    ///
+    /// Panics if either dimension is zero.
     pub fn new(height: usize, width: usize) -> Self {
         assert!(height > 0 && width > 0, "model input size must be non-zero");
         Self { height, width }
     }
 
+    /// Input height in pixels.
     pub fn height(&self) -> usize {
         self.height
     }
 
+    /// Input width in pixels.
     pub fn width(&self) -> usize {
         self.width
     }
@@ -128,6 +135,10 @@ impl InferenceSettings {
     ///
     /// This bypasses the size inferred from the model; callers are responsible for choosing a
     /// size the model supports.
+    ///
+    /// # Panics
+    ///
+    /// Panics if either dimension is zero.
     pub fn with_model_input_size(mut self, height: usize, width: usize) -> Self {
         self.model_input_size = Some(ModelInputSize::new(height, width));
         self

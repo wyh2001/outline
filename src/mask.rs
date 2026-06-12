@@ -25,25 +25,41 @@ use vtracer::ColorImage;
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum MaskOperation {
+    /// Apply Gaussian blur to the mask.
     Blur {
+        /// Gaussian sigma. Must be greater than zero.
         sigma: f32,
     },
+    /// Threshold the mask into a binary mask.
     Threshold {
+        /// Threshold value in the 0-255 range.
         value: u8,
     },
+    /// Expand white mask regions.
     Dilate {
+        /// Dilation radius in pixels.
         radius: f32,
     },
+    /// Shrink white mask regions.
     Erode {
+        /// Erosion radius in pixels.
         radius: f32,
+        /// How pixels outside the image bounds are treated.
         border_mode: ErosionBorderMode,
     },
+    /// Fill enclosed background regions.
     FillHoles {
+        /// Threshold used to distinguish foreground from background.
         threshold: u8,
     },
 }
 
 impl MaskOperation {
+    /// Apply this operation to a grayscale mask image.
+    ///
+    /// # Panics
+    ///
+    /// Panics if this is a blur operation whose `sigma` is not greater than zero.
     pub fn apply(&self, input: &GrayImage) -> GrayImage {
         match self {
             MaskOperation::Blur { sigma } => gaussian_blur_f32(input, *sigma),
@@ -59,6 +75,10 @@ impl MaskOperation {
 }
 
 /// Run a list of operations against the provided source image, returning the transformed mask.
+///
+/// # Panics
+///
+/// Panics if `operations` contains a blur operation whose `sigma` is not greater than zero.
 pub fn apply_operations(source: &GrayImage, operations: &[MaskOperation]) -> GrayImage {
     let mut current = source.clone();
     for op in operations {

@@ -2,8 +2,8 @@
 //!
 //! Image background removal with flexible mask processing options.
 //!
-//! Powered by ONNX Runtime ([`ort`](https://docs.rs/ort)) and VTracer, and works with U2-Net, BiRefNet,
-//! and other ONNX models with a compatible input/output shape.
+//! Powered by [ONNX Runtime](https://onnxruntime.ai/) ([`ort`](https://ort.pyke.io/)) and VTracer,
+//! and works with U2-Net, BiRefNet, and other ONNX models with a compatible input/output shape.
 //!
 //! # Quick Start
 //!
@@ -26,13 +26,13 @@
 //!
 //! # Advanced: ONNX Runtime Strategy
 //!
-//! By default, `outline-core` enables the `backend-ort` and `ort-download-binaries` features so
-//! ONNX Runtime is downloaded automatically for supported targets.
+//! By default, `outline-core` enables `backend-ort` and `ort-download-binaries`, so `ort`
+//! downloads a prebuilt ONNX Runtime package for supported targets.
 //!
 //! If your environment needs a different runtime strategy, `outline-core` exposes the supported
 //! non-default paths directly. These features are additive. If `ort-load-dynamic` is enabled,
 //! `ort` skips build-time linking and loads ONNX Runtime at runtime. Otherwise, build-time
-//! linking uses the enabled inputs in order: `ort-pkg-config`, `runtime::ENV_ORT_LIB_LOCATION`,
+//! linking uses the enabled inputs in order: `ort-pkg-config`, [`runtime::ENV_ORT_LIB_LOCATION`],
 //! then `ort-download-binaries`.
 //! - `ort-pkg-config`: discover a system ONNX Runtime via `pkg-config`
 //! - `ort-load-dynamic`: load a `.dll`/`.so`/`.dylib` at runtime via the
@@ -41,8 +41,14 @@
 //! - [`runtime::ENV_ORT_LIB_LOCATION`]: link against a custom ONNX Runtime build
 //! - [`runtime::ENV_ORT_PREFER_DYNAMIC_LINK`]: prefer shared-library linking for a custom build
 //!
-//! Setting `default-features = false` disables the default backend selection. Use it together with
-//! `backend-ort` plus one ONNX Runtime strategy, or with the experimental `backend-rten` backend.
+//! Setting `default-features = false` also disables the default backend selection. Use it together
+//! with `backend-ort` plus one ONNX Runtime strategy, or with the experimental `backend-rten`
+//! backend.
+//!
+//! # Experimental: Pure-Rust RTen Backend
+//!
+//! Enable `backend-rten` to use the RTen backend as an ONNX Runtime
+//! alternative.
 
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
@@ -164,6 +170,10 @@ impl Outline {
     ///
     /// This bypasses the size inferred from the model; callers are responsible for choosing a
     /// size the model supports.
+    ///
+    /// # Panics
+    ///
+    /// Panics if either dimension is zero.
     pub fn with_model_input_size(mut self, height: usize, width: usize) -> Self {
         self.settings = self.settings.with_model_input_size(height, width);
         self

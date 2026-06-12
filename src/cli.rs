@@ -155,7 +155,7 @@ pub struct CutCommand {
     /// Save the raw matte alongside the foreground PNG
     #[arg(long = "export-matte", value_name = "PATH", num_args = 0..=1)]
     pub export_matte: Option<Option<PathBuf>>,
-    /// Save the processed binary mask alongside the foreground PNG
+    /// Save the processed mask alongside the foreground PNG
     #[arg(long = "export-mask", value_name = "PATH", num_args = 0..=1)]
     pub export_mask: Option<Option<PathBuf>>,
     /// Select which mask is used for the foreground alpha channel

@@ -1,8 +1,8 @@
 //! ONNX Runtime linkage and loading helpers exposed by `outline-core`.
 //!
-//! By default, `outline-core` enables the `ort-download-binaries` feature, which mirrors `ort`'s
-//! prebuilt runtime download path. Alternative strategies can be selected with crate features or
-//! build environment variables.
+//! By default, `outline-core` enables `backend-ort` and `ort-download-binaries`, so `ort`
+//! downloads a prebuilt ONNX Runtime package for supported targets. Alternative strategies can be
+//! selected with crate features or build environment variables.
 
 /// Runtime environment variable used by `ort` to locate a specific ONNX Runtime shared library
 /// when `ort-load-dynamic` is enabled.
