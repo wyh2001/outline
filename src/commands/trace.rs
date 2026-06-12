@@ -6,7 +6,7 @@ use crate::cli::{GlobalOptions, MaskSourceArg, TraceCommand};
 
 use super::utils::{
     build_outline, derive_svg_path, mask_pipeline_from_args, processing_requested,
-    resolve_mask_source_arg, warn_if_soft_conflict,
+    resolve_mask_source_arg,
 };
 
 /// The main function to run the trace command.
@@ -26,10 +26,6 @@ pub fn run(global: &GlobalOptions, cmd: TraceCommand) -> OutlineResult<()> {
     let mask_pipeline = mask_pipeline_from_args(&cmd.mask_processing);
 
     let mask_source = resolve_mask_source_arg(cmd.mask_source, processing_requested);
-
-    if matches!(mask_source, MaskSourceArg::Processed) {
-        warn_if_soft_conflict(&cmd.mask_processing, "tracing output");
-    }
 
     let svg = match mask_source {
         MaskSourceArg::Raw => matte.trace(&vectorizer, &options)?,

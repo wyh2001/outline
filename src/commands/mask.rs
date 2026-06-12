@@ -4,10 +4,8 @@ use crate::cli::{GlobalOptions, MaskCommand, MaskExportSource};
 
 use super::utils::{
     build_outline, derive_variant_path, mask_pipeline_from_args, processing_requested,
-    resolve_mask_export_source, warn_if_soft_conflict,
+    resolve_mask_export_source,
 };
-
-// Resolved by helper in utils now.
 
 /// The main function to run the mask command.
 pub fn run(global: &GlobalOptions, cmd: MaskCommand) -> OutlineResult<()> {
@@ -30,7 +28,6 @@ pub fn run(global: &GlobalOptions, cmd: MaskCommand) -> OutlineResult<()> {
 
     match mask_source {
         MaskExportSource::Processed => {
-            warn_if_soft_conflict(&cmd.mask_processing, "output");
             let mask = matte.clone().processed_with(&mask_pipeline)?;
             mask.save(&output_path)?;
             println!("Processed mask PNG saved to {}", output_path.display());

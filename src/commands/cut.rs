@@ -4,7 +4,7 @@ use crate::cli::{AlphaFromArg, CutCommand, GlobalOptions};
 
 use super::utils::{
     build_outline, derive_variant_path, mask_pipeline_from_args, processing_requested,
-    resolve_alpha_source, resolve_export_path, warn_if_soft_conflict,
+    resolve_alpha_source, resolve_export_path,
 };
 
 /// The main function to run the cut command.
@@ -25,12 +25,6 @@ pub fn run(global: &GlobalOptions, cmd: CutCommand) -> OutlineResult<()> {
     let mask_pipeline = mask_pipeline_from_args(&cmd.mask_processing);
 
     let alpha_source = resolve_alpha_source(cmd.alpha_source, processing_requested);
-
-    let needs_processed_mask =
-        matches!(alpha_source, AlphaFromArg::Processed) || cmd.export_mask.is_some();
-    if needs_processed_mask {
-        warn_if_soft_conflict(&cmd.mask_processing, "processed output");
-    }
 
     let mut ensure_processed = |matte: &MatteHandle| -> OutlineResult<MaskHandle> {
         if let Some(mask) = &processed_mask {

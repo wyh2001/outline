@@ -3,8 +3,8 @@ use std::path::{Path, PathBuf};
 use outline::{MaskPipeline, Outline};
 
 use crate::cli::{
-    AlphaFromArg, BinaryOption, CliMaskProcessingRequest, GlobalOptions, MaskExportSource,
-    MaskProcessingArgs, MaskSourceArg,
+    AlphaFromArg, CliMaskProcessingRequest, GlobalOptions, MaskExportSource, MaskProcessingArgs,
+    MaskSourceArg,
 };
 
 fn resolve_model_path(global: &GlobalOptions) -> PathBuf {
@@ -84,33 +84,12 @@ pub fn derive_svg_path(input: &Path) -> PathBuf {
 
 /// Determine if any mask processing is requested based on the provided arguments.
 pub fn processing_requested(args: &MaskProcessingArgs) -> bool {
-    !mask_processing_request_from_args(args).is_empty()
+    !CliMaskProcessingRequest::from_args(args).is_empty()
 }
 
 /// Build the mask processing pipeline requested by CLI flags.
 pub fn mask_pipeline_from_args(args: &MaskProcessingArgs) -> MaskPipeline {
-    mask_processing_request_from_args(args).to_pipeline()
-}
-
-fn mask_processing_request_from_args(args: &MaskProcessingArgs) -> CliMaskProcessingRequest {
-    CliMaskProcessingRequest::from_args(args)
-}
-
-/// Check if there's a conflict between soft mask mode and operations that assume hard masks.
-/// Returns true if --binary disabled is set but dilation, erosion, or fill-holes are requested.
-pub fn has_soft_conflict(args: &MaskProcessingArgs) -> bool {
-    args.binary == BinaryOption::Disabled
-        && (args.dilate.is_some() || args.erode.is_some() || args.fill_holes)
-}
-
-/// Emit a warning when dilation/erosion/fill-holes are requested but thresholding is disabled.
-pub fn warn_if_soft_conflict(args: &MaskProcessingArgs, context: &str) {
-    if has_soft_conflict(args) {
-        eprintln!(
-            "Warning: binary mask processing is disabled, but dilation/erosion/fill-holes assume a hard mask; {} may be unexpected.",
-            context
-        );
-    }
+    CliMaskProcessingRequest::from_args(args).to_pipeline()
 }
 
 /// Resolve alpha source with Auto behavior.
@@ -395,17 +374,17 @@ mod tests {
     }
 
     mod processing_requested {
-        use crate::cli::{BinaryOption, CliMaskProcessingStep, MaskProcessingArgs};
+        use crate::cli::{CliMaskProcessingStep, MaskProcessingArgs};
 
         fn default_args() -> MaskProcessingArgs {
             MaskProcessingArgs {
                 blur: None,
-                mask_threshold: None,
-                binary: BinaryOption::Auto,
+                threshold: None,
+                no_implicit_threshold: false,
                 dilate: None,
                 erode: None,
                 erode_border: None,
-                fill_holes: false,
+                fill_holes: None,
                 ordered_steps: vec![],
             }
         }
@@ -416,19 +395,19 @@ mod tests {
         }
 
         #[test]
-        fn false_for_threshold_only() {
+        fn true_for_threshold_only() {
             let args = MaskProcessingArgs {
-                mask_threshold: Some(200),
+                ordered_steps: vec![CliMaskProcessingStep::Threshold(200)],
                 ..default_args()
             };
 
-            assert!(!super::processing_requested(&args));
+            assert!(super::processing_requested(&args));
         }
 
         #[test]
-        fn true_for_enabled_binary() {
+        fn true_for_default_threshold() {
             let args = MaskProcessingArgs {
-                ordered_steps: vec![CliMaskProcessingStep::Threshold(None)],
+                ordered_steps: vec![CliMaskProcessingStep::Threshold(120)],
                 ..default_args()
             };
 
@@ -489,75 +468,6 @@ mod tests {
         fn explicit_processed() {
             let result = resolve_mask_export_source(MaskExportSource::Processed, false);
             assert!(matches!(result, MaskExportSource::Processed));
-        }
-    }
-
-    mod has_soft_conflict {
-        use super::*;
-
-        fn make_args(
-            binary: BinaryOption,
-            dilate: Option<Option<f32>>,
-            erode: Option<Option<f32>>,
-            fill_holes: bool,
-        ) -> MaskProcessingArgs {
-            MaskProcessingArgs {
-                blur: None,
-                mask_threshold: None,
-                binary,
-                dilate,
-                erode,
-                erode_border: None,
-                fill_holes,
-                ordered_steps: vec![],
-            }
-        }
-
-        #[test]
-        fn no_conflict_when_binary_enabled() {
-            let args = make_args(BinaryOption::Enabled, Some(Some(5.0)), None, true);
-            assert!(!has_soft_conflict(&args));
-        }
-
-        #[test]
-        fn no_conflict_when_binary_auto() {
-            let args = make_args(BinaryOption::Auto, Some(Some(5.0)), None, true);
-            assert!(!has_soft_conflict(&args));
-        }
-
-        #[test]
-        fn no_conflict_when_disabled_without_dilate_or_fill() {
-            let args = make_args(BinaryOption::Disabled, None, None, false);
-            assert!(!has_soft_conflict(&args));
-        }
-
-        #[test]
-        fn conflict_when_disabled_with_dilate() {
-            let args = make_args(BinaryOption::Disabled, Some(Some(5.0)), None, false);
-            assert!(has_soft_conflict(&args));
-        }
-
-        #[test]
-        fn conflict_when_disabled_with_erode() {
-            let args = make_args(BinaryOption::Disabled, None, Some(Some(5.0)), false);
-            assert!(has_soft_conflict(&args));
-        }
-
-        #[test]
-        fn conflict_when_disabled_with_fill_holes() {
-            let args = make_args(BinaryOption::Disabled, None, None, true);
-            assert!(has_soft_conflict(&args));
-        }
-
-        #[test]
-        fn conflict_when_disabled_with_both() {
-            let args = make_args(
-                BinaryOption::Disabled,
-                Some(Some(5.0)),
-                Some(Some(5.0)),
-                true,
-            );
-            assert!(has_soft_conflict(&args));
         }
     }
 }
