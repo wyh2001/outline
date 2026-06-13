@@ -8,6 +8,8 @@
 //! # Quick Start
 //!
 //! ```no_run
+//! # #[cfg(any(feature = "backend-ort", feature = "backend-rten"))]
+//! # {
 //! use outline::Outline;
 //!
 //! let outline = Outline::new("model.onnx");
@@ -21,6 +23,7 @@
 //! // Process the mask and save it
 //! let mask = matte.blur().threshold().processed()?;
 //! mask.save("mask.png")?;
+//! # }
 //! # Ok::<_, outline::OutlineError>(())
 //! ```
 //!
@@ -52,13 +55,11 @@
 
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
-#[cfg(not(any(feature = "backend-ort", feature = "backend-rten")))]
-compile_error!("enable at least one inference backend feature: `backend-ort` or `backend-rten`.");
-
 mod config;
 mod error;
 mod foreground;
 mod geometry;
+#[cfg(any(feature = "backend-ort", feature = "backend-rten"))]
 mod inference;
 mod mask;
 mod matte;
@@ -68,9 +69,11 @@ mod vectorizer;
 
 #[doc(inline)]
 pub use crate::config::{
-    DEFAULT_MODEL_PATH, ENV_MODEL_PATH, ErosionBorderMode, InferenceBackend, InferenceSettings,
-    MaskProcessingDefaults, ModelInputSize,
+    DEFAULT_MODEL_PATH, ENV_MODEL_PATH, ErosionBorderMode, MaskProcessingDefaults,
 };
+#[cfg(any(feature = "backend-ort", feature = "backend-rten"))]
+#[doc(inline)]
+pub use crate::config::{InferenceBackend, InferenceSettings, ModelInputSize};
 #[doc(inline)]
 pub use crate::error::{OutlineError, OutlineResult};
 #[doc(inline)]
@@ -90,12 +93,17 @@ pub use vectorizer::MaskVectorizer;
 #[doc(inline)]
 pub use vectorizer::vtracer::{TraceOptions, VtracerSvgVectorizer, trace_to_svg_string};
 
+#[cfg(any(feature = "backend-ort", feature = "backend-rten"))]
 use std::path::{Path, PathBuf};
+#[cfg(any(feature = "backend-ort", feature = "backend-rten"))]
 use std::sync::{Arc, Mutex};
 
+#[cfg(any(feature = "backend-ort", feature = "backend-rten"))]
 use image::imageops::FilterType;
+#[cfg(any(feature = "backend-ort", feature = "backend-rten"))]
 use image::{DynamicImage, RgbImage, RgbaImage};
 
+#[cfg(any(feature = "backend-ort", feature = "backend-rten"))]
 use crate::inference::{CachedInferenceSession, load_rgb_from_memory_with_orientation};
 
 /// Entry point for configuring and running background matting inference.
@@ -105,6 +113,7 @@ use crate::inference::{CachedInferenceSession, load_rgb_from_memory_with_orienta
 /// processing, then call [`for_image`](Outline::for_image) to run inference on individual images.
 ///
 /// Each `Outline` instance lazily initializes and reuses its ONNX Runtime session.
+#[cfg(any(feature = "backend-ort", feature = "backend-rten"))]
 #[derive(Debug)]
 pub struct Outline {
     /// Inference settings for model and image handling.
@@ -115,6 +124,7 @@ pub struct Outline {
     cached_session: Mutex<Option<Arc<CachedInferenceSession>>>,
 }
 
+#[cfg(any(feature = "backend-ort", feature = "backend-rten"))]
 impl Clone for Outline {
     fn clone(&self) -> Self {
         Self {
@@ -125,6 +135,7 @@ impl Clone for Outline {
     }
 }
 
+#[cfg(any(feature = "backend-ort", feature = "backend-rten"))]
 impl Outline {
     /// Create a new `Outline` instance with the given model path and default settings.
     pub fn new(model_path: impl Into<PathBuf>) -> Self {
@@ -271,11 +282,11 @@ impl Outline {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, any(feature = "backend-ort", feature = "backend-rten")))]
 #[path = "../tests/support/tiny_onnx.rs"]
 mod tiny_onnx;
 
-#[cfg(test)]
+#[cfg(all(test, any(feature = "backend-ort", feature = "backend-rten")))]
 mod tests {
     use super::*;
     use std::sync::Mutex;

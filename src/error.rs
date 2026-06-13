@@ -39,6 +39,7 @@ pub enum OutlineError {
     #[error(transparent)]
     Io(#[from] std::io::Error),
     /// Tensor shape mismatch or invalid dimensions.
+    #[cfg(any(feature = "backend-ort", feature = "backend-rten"))]
     #[error("Invalid tensor shape: {0}")]
     Shape(#[from] ndarray::ShapeError),
     /// Vectorization or tracing operation failed.

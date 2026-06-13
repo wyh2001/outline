@@ -7,6 +7,7 @@ use image::{GrayImage, Luma, Rgb, RgbImage, Rgba, RgbaImage};
 use imageproc::contrast::{ThresholdType, threshold as ip_threshold};
 use imageproc::distance_transform::euclidean_squared_distance_transform;
 use imageproc::filter::gaussian_blur_f32;
+#[cfg(any(feature = "backend-ort", feature = "backend-rten", test))]
 use ndarray::Array2;
 
 use crate::MaskVectorizer;
@@ -176,6 +177,7 @@ impl MaskPipeline {
 }
 
 /// Convert a 2D array of f32 values in [0.0, 1.0] to a grayscale image.
+#[cfg(any(feature = "backend-ort", feature = "backend-rten", test))]
 pub fn array_to_gray_image(array: &Array2<f32>) -> GrayImage {
     let (h, w) = array.dim();
     GrayImage::from_fn(w as u32, h as u32, |x, y| {
@@ -534,10 +536,12 @@ pub fn colorize_mask(mask: &GrayImage, color: impl Into<MaskColor>) -> RgbaImage
 ///
 /// # Example
 /// ```no_run
-/// use outline::Outline;
+/// use image::{GrayImage, Luma, Rgb, RgbImage};
+/// use outline::InferencedMatte;
 ///
-/// let outline = Outline::new("model.onnx");
-/// let session = outline.for_image("input.jpg")?;
+/// let rgb = RgbImage::from_pixel(2, 2, Rgb([255, 255, 255]));
+/// let raw_matte = GrayImage::from_pixel(2, 2, Luma([255]));
+/// let session = InferencedMatte::from_rgb_and_matte(rgb, raw_matte)?;
 /// let mask = session.matte().blur().threshold().processed()?;
 ///
 /// // Generate multiple outputs from the mask

@@ -12,8 +12,8 @@ default = ["backend-ort", "ort-download-binaries"]
 cli = ["clap", "vectorizer-vtracer"]
 vectorizer-vtracer = ["dep:vtracer", "dep:visioncortex"]
 fetch-model = ["dep:ureq", "dep:indicatif", "dep:sha2", "dep:dirs"]
-backend-ort = ["dep:ort"]
-backend-rten = ["dep:rten"]
+backend-ort = ["dep:ort", "dep:ndarray"]
+backend-rten = ["dep:rten", "dep:ndarray"]
 # Preserve ort's default feature set.
 ort-download-binaries = [
     "backend-ort",
@@ -44,7 +44,7 @@ ort = { version = "=2.0.0-rc.12", default-features = false, features = [
 ], optional = true }
 rten = { version = "0.24.0", optional = true }
 vtracer = { version = "0.6.5", optional = true }
-ndarray = "0.17"
+ndarray = { version = "0.17", optional = true }
 visioncortex = { version = "0.8.10", optional = true }
 imageproc = "0.27.0"
 thiserror = "2"
@@ -60,6 +60,7 @@ path = "src/main.rs"
 required-features = ["cli"]
 
 [dev-dependencies]
+ndarray = "0.17"
 proptest = "1.11.0"
 tempfile = "3"
 

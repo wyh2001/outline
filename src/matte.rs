@@ -13,7 +13,7 @@ use crate::geometry::{
 use crate::mask::{
     MaskColor, MaskHandle, MaskOperation, MaskPipeline, apply_operations, colorize_mask,
 };
-use crate::{MaskVectorizer, OutlineResult};
+use crate::{MaskVectorizer, OutlineError, OutlineResult};
 
 /// Inference result containing the original RGB image and raw matte prediction.
 ///
@@ -21,10 +21,12 @@ use crate::{MaskVectorizer, OutlineResult};
 ///
 /// # Example
 /// ```no_run
-/// use outline::Outline;
+/// use image::{GrayImage, Luma, Rgb, RgbImage};
+/// use outline::InferencedMatte;
 ///
-/// let outline = Outline::new("model.onnx");
-/// let session = outline.for_image("input.png")?;
+/// let rgb = RgbImage::from_pixel(1, 1, Rgb([255, 255, 255]));
+/// let raw_matte = GrayImage::from_pixel(1, 1, Luma([255]));
+/// let session = InferencedMatte::from_rgb_and_matte(rgb, raw_matte)?;
 /// let matte = session.matte();
 ///
 /// // Access the original image and raw matte directly
@@ -56,6 +58,30 @@ impl InferencedMatte {
         }
     }
 
+    /// Construct an `InferencedMatte` from an externally generated matte.
+    pub fn from_rgb_and_matte(rgb_image: RgbImage, raw_matte: GrayImage) -> OutlineResult<Self> {
+        Self::from_rgb_and_matte_with_defaults(
+            rgb_image,
+            raw_matte,
+            MaskProcessingDefaults::default(),
+        )
+    }
+
+    /// Construct an `InferencedMatte` from an externally generated matte and explicit defaults.
+    pub fn from_rgb_and_matte_with_defaults(
+        rgb_image: RgbImage,
+        raw_matte: GrayImage,
+        mask_processing_defaults: MaskProcessingDefaults,
+    ) -> OutlineResult<Self> {
+        let expected = rgb_image.dimensions();
+        let found = raw_matte.dimensions();
+        if expected != found {
+            return Err(OutlineError::AlphaMismatch { expected, found });
+        }
+
+        Ok(Self::new(rgb_image, raw_matte, mask_processing_defaults))
+    }
+
     /// Get a reference to the original RGB image.
     pub fn rgb_image(&self) -> &RgbImage {
         self.rgb_image.as_ref()
@@ -83,10 +109,12 @@ impl InferencedMatte {
 ///
 /// # Example
 /// ```no_run
-/// use outline::Outline;
+/// use image::{GrayImage, Luma, Rgb, RgbImage};
+/// use outline::InferencedMatte;
 ///
-/// let outline = Outline::new("model.onnx");
-/// let session = outline.for_image("input.jpg")?;
+/// let rgb = RgbImage::from_pixel(5, 5, Rgb([255, 255, 255]));
+/// let raw_matte = GrayImage::from_pixel(5, 5, Luma([255]));
+/// let session = InferencedMatte::from_rgb_and_matte(rgb, raw_matte)?;
 ///
 /// // Chain operations and execute them
 /// let mask = session.matte()
@@ -386,6 +414,55 @@ impl MatteHandle {
 mod tests {
     use super::*;
     use image::{Luma, Rgb};
+
+    #[test]
+    fn inferenced_matte_from_rgb_and_matte_accepts_matching_dimensions() {
+        let rgb = RgbImage::from_pixel(2, 2, Rgb([10, 20, 30]));
+        let matte = GrayImage::from_fn(2, 2, |x, y| Luma([((x + y * 2) * 64) as u8]));
+
+        let result = InferencedMatte::from_rgb_and_matte(rgb.clone(), matte.clone())
+            .expect("matching dimensions should construct an external matte");
+
+        assert_eq!(result.rgb_image(), &rgb);
+        assert_eq!(result.raw_matte(), &matte);
+    }
+
+    #[test]
+    fn inferenced_matte_from_rgb_and_matte_with_defaults_uses_supplied_defaults() {
+        let rgb = RgbImage::from_pixel(1, 1, Rgb([0, 0, 0]));
+        let matte = GrayImage::from_pixel(1, 1, Luma([100]));
+        let defaults = MaskProcessingDefaults {
+            mask_threshold: 50,
+            ..MaskProcessingDefaults::default()
+        };
+
+        let result = InferencedMatte::from_rgb_and_matte_with_defaults(rgb, matte, defaults)
+            .expect("matching dimensions should construct an external matte");
+
+        let mask = result
+            .matte()
+            .threshold()
+            .processed()
+            .expect("thresholding should succeed");
+        assert_eq!(mask.as_raw_mask().get_pixel(0, 0).0, [255]);
+    }
+
+    #[test]
+    fn inferenced_matte_from_rgb_and_matte_rejects_mismatched_dimensions() {
+        let rgb = RgbImage::from_pixel(2, 2, Rgb([10, 20, 30]));
+        let matte = GrayImage::from_pixel(1, 2, Luma([255]));
+
+        let err = InferencedMatte::from_rgb_and_matte(rgb, matte)
+            .expect_err("mismatched dimensions should be rejected");
+
+        assert!(matches!(
+            err,
+            OutlineError::AlphaMismatch {
+                expected: (2, 2),
+                found: (1, 2)
+            }
+        ));
+    }
 
     fn matte_handle() -> MatteHandle {
         MatteHandle {

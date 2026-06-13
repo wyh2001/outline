@@ -32,10 +32,12 @@ pub fn compose_foreground(rgb: &RgbImage, alpha: &GrayImage) -> OutlineResult<Rg
 ///
 /// # Example
 /// ```no_run
-/// use outline::Outline;
+/// use image::{GrayImage, Luma, Rgb, RgbImage};
+/// use outline::InferencedMatte;
 ///
-/// let outline = Outline::new("model.onnx");
-/// let session = outline.for_image("input.jpg")?;
+/// let rgb = RgbImage::from_pixel(2, 2, Rgb([255, 255, 255]));
+/// let raw_matte = GrayImage::from_pixel(2, 2, Luma([255]));
+/// let session = InferencedMatte::from_rgb_and_matte(rgb, raw_matte)?;
 ///
 /// // Soft edges from raw matte
 /// let soft = session.matte().foreground()?;

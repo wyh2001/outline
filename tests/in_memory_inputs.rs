@@ -1,3 +1,5 @@
+#![cfg(any(feature = "backend-ort", feature = "backend-rten"))]
+
 mod support;
 
 use std::io::Cursor;
