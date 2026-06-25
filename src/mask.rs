@@ -3,10 +3,11 @@ use std::collections::VecDeque;
 use std::path::Path;
 use std::sync::Arc;
 
-use image::{GrayImage, Luma, Rgb, RgbImage, Rgba, RgbaImage};
+use image::{GrayImage, ImageBuffer, Luma, Rgb, RgbImage, Rgba, RgbaImage};
 use imageproc::contrast::{ThresholdType, threshold as ip_threshold};
 use imageproc::distance_transform::euclidean_squared_distance_transform;
 use imageproc::filter::gaussian_blur_f32;
+use imageproc::region_labelling::{Connectivity, connected_components};
 use ndarray::Array2;
 
 use crate::MaskVectorizer;
@@ -52,6 +53,20 @@ pub enum MaskOperation {
         /// Threshold used to distinguish foreground from background.
         threshold: u8,
     },
+    /// Keep the largest connected foreground components.
+    KeepNLargestComponents {
+        /// Number of connected components to keep.
+        count: usize,
+        /// Threshold used to distinguish foreground from background.
+        threshold: u8,
+    },
+    /// Drop connected foreground components below the requested pixel area.
+    DropComponentsBelowArea {
+        /// Minimum component area in pixels.
+        min_area: f32,
+        /// Threshold used to distinguish foreground from background.
+        threshold: u8,
+    },
 }
 
 impl MaskOperation {
@@ -71,6 +86,13 @@ impl MaskOperation {
                 border_mode,
             } => erode_euclidean_with_border_mode(input, *radius, *border_mode),
             MaskOperation::FillHoles { threshold } => fill_mask_holes(input, *threshold),
+            MaskOperation::KeepNLargestComponents { count, threshold } => {
+                keep_n_largest_components(input, *count, *threshold)
+            }
+            MaskOperation::DropComponentsBelowArea {
+                min_area,
+                threshold,
+            } => drop_components_below_area(input, *min_area, *threshold),
         }
     }
 }
@@ -173,6 +195,35 @@ impl MaskPipeline {
         self.operations.push(MaskOperation::FillHoles { threshold });
         self
     }
+
+    /// Keep only the largest connected foreground component.
+    pub fn keep_largest_component(self) -> Self {
+        self.keep_n_largest_components(1)
+    }
+
+    /// Keep the largest `count` connected foreground components.
+    pub fn keep_n_largest_components(mut self, count: usize) -> Self {
+        self.operations.push(MaskOperation::KeepNLargestComponents {
+            count,
+            threshold: 1,
+        });
+        self
+    }
+
+    /// Drop connected foreground components below `min_area` pixels.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `min_area` is negative or NaN.
+    pub fn drop_components_below_area(mut self, min_area: f32) -> Self {
+        assert_nonnegative_area(min_area);
+        self.operations
+            .push(MaskOperation::DropComponentsBelowArea {
+                min_area,
+                threshold: 1,
+            });
+        self
+    }
 }
 
 /// Convert a 2D array of f32 values in [0.0, 1.0] to a grayscale image.
@@ -229,6 +280,79 @@ pub fn threshold_mask(gray: &GrayImage, thr: u8) -> GrayImage {
 
 fn assert_nonnegative_radius(radius: f32) {
     assert!(radius >= 0.0, "radius must be >= 0.0");
+}
+
+pub(crate) fn assert_nonnegative_area(area: f32) {
+    assert!(area >= 0.0, "area must be >= 0.0");
+}
+
+fn keep_n_largest_components(mask: &GrayImage, count: usize, threshold: u8) -> GrayImage {
+    let labels = component_labels(mask, threshold);
+    let areas = component_areas(&labels);
+    if count == 0 || areas.len() <= 1 {
+        return GrayImage::new(mask.width(), mask.height());
+    }
+
+    let mut ranked_labels: Vec<_> = (1..areas.len()).collect();
+    ranked_labels.sort_by(|a, b| areas[*b].cmp(&areas[*a]).then_with(|| a.cmp(b)));
+
+    let mut keep_labels = vec![false; areas.len()];
+    for label in ranked_labels.into_iter().take(count) {
+        keep_labels[label] = true;
+    }
+
+    copy_labelled_pixels(mask, &labels, &keep_labels)
+}
+
+fn drop_components_below_area(mask: &GrayImage, min_area: f32, threshold: u8) -> GrayImage {
+    assert_nonnegative_area(min_area);
+    if min_area <= 0.0 {
+        return mask.clone();
+    }
+
+    let labels = component_labels(mask, threshold);
+    let areas = component_areas(&labels);
+    let keep_labels: Vec<_> = areas.iter().map(|area| *area as f32 >= min_area).collect();
+
+    copy_labelled_pixels(mask, &labels, &keep_labels)
+}
+
+fn component_labels(mask: &GrayImage, threshold: u8) -> ImageBuffer<Luma<u32>, Vec<u32>> {
+    let binary = GrayImage::from_fn(mask.width(), mask.height(), |x, y| {
+        if mask.get_pixel(x, y)[0] >= threshold {
+            Luma([255])
+        } else {
+            Luma([0])
+        }
+    });
+    connected_components(&binary, Connectivity::Four, Luma([0]))
+}
+
+fn component_areas(labels: &ImageBuffer<Luma<u32>, Vec<u32>>) -> Vec<usize> {
+    let max_label = labels.pixels().map(|pixel| pixel[0]).max().unwrap_or(0) as usize;
+    let mut areas = vec![0; max_label + 1];
+    for label in labels.pixels().map(|pixel| pixel[0] as usize) {
+        if label > 0 {
+            areas[label] += 1;
+        }
+    }
+    areas
+}
+
+fn copy_labelled_pixels(
+    source: &GrayImage,
+    labels: &ImageBuffer<Luma<u32>, Vec<u32>>,
+    keep_labels: &[bool],
+) -> GrayImage {
+    let mut out = GrayImage::new(source.width(), source.height());
+    for (x, y, out_pixel) in out.enumerate_pixels_mut() {
+        let label = labels.get_pixel(x, y)[0] as usize;
+        if label > 0 && keep_labels.get(label).copied().unwrap_or(false) {
+            *out_pixel = *source.get_pixel(x, y);
+        }
+    }
+
+    out
 }
 
 /// Dilate a binary mask by a Euclidean radius.
@@ -784,6 +908,44 @@ impl MaskHandle {
         self
     }
 
+    /// Keep only the largest connected foreground component.
+    ///
+    /// **Note**: Component filtering typically works best on binary masks. If this mask is still grayscale,
+    /// consider calling [`threshold`](MaskHandle::threshold) first.
+    pub fn keep_largest_component(self) -> Self {
+        self.keep_n_largest_components(1)
+    }
+
+    /// Keep the largest `count` connected foreground components.
+    ///
+    /// **Note**: Component filtering typically works best on binary masks. If this mask is still grayscale,
+    /// consider calling [`threshold`](MaskHandle::threshold) first.
+    pub fn keep_n_largest_components(mut self, count: usize) -> Self {
+        self.operations.push(MaskOperation::KeepNLargestComponents {
+            count,
+            threshold: self.mask_processing_defaults.mask_threshold,
+        });
+        self
+    }
+
+    /// Drop connected foreground components below `min_area` pixels.
+    ///
+    /// **Note**: Component filtering typically works best on binary masks. If this mask is still grayscale,
+    /// consider calling [`threshold`](MaskHandle::threshold) first.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `min_area` is negative or NaN.
+    pub fn drop_components_below_area(mut self, min_area: f32) -> Self {
+        assert_nonnegative_area(min_area);
+        self.operations
+            .push(MaskOperation::DropComponentsBelowArea {
+                min_area,
+                threshold: self.mask_processing_defaults.mask_threshold,
+            });
+        self
+    }
+
     /// Process the mask with the accumulated operations.
     pub fn processed(self) -> OutlineResult<MaskHandle> {
         self.process_with_pipeline(None)
@@ -1290,6 +1452,80 @@ mod tests {
         }
     }
 
+    mod component_filtering {
+        use super::*;
+
+        fn mask_with_three_components() -> GrayImage {
+            let mut input = gray_image(8, 5, 0);
+            for y in 0..2 {
+                for x in 0..2 {
+                    input.put_pixel(x, y, Luma([200]));
+                }
+            }
+            input.put_pixel(5, 0, Luma([180]));
+            input.put_pixel(5, 1, Luma([180]));
+            input.put_pixel(7, 4, Luma([220]));
+            input
+        }
+
+        #[test]
+        fn keep_n_largest_components_keeps_requested_count() {
+            let input = mask_with_three_components();
+            let result = keep_n_largest_components(&input, 2, 128);
+
+            assert_eq!(result.get_pixel(0, 0).0[0], 200);
+            assert_eq!(result.get_pixel(5, 0).0[0], 180);
+            assert_eq!(result.get_pixel(7, 4).0[0], 0);
+        }
+
+        #[test]
+        fn keep_largest_component_keeps_only_biggest_component() {
+            let input = mask_with_three_components();
+            let result = keep_n_largest_components(&input, 1, 128);
+
+            assert_eq!(result.get_pixel(0, 0).0[0], 200);
+            assert_eq!(result.get_pixel(5, 0).0[0], 0);
+            assert_eq!(result.get_pixel(7, 4).0[0], 0);
+        }
+
+        #[test]
+        fn drop_components_below_area_removes_small_components() {
+            let input = mask_with_three_components();
+            let result = drop_components_below_area(&input, 2.0, 128);
+
+            assert_eq!(result.get_pixel(0, 0).0[0], 200);
+            assert_eq!(result.get_pixel(5, 0).0[0], 180);
+            assert_eq!(result.get_pixel(7, 4).0[0], 0);
+        }
+
+        #[test]
+        fn component_labels_threshold_before_labelling() {
+            let mut input = gray_image(3, 1, 0);
+            input.put_pixel(0, 0, Luma([128]));
+            input.put_pixel(1, 0, Luma([200]));
+
+            let result = keep_n_largest_components(&input, 1, 128);
+
+            assert_eq!(result.get_pixel(0, 0).0[0], 128);
+            assert_eq!(result.get_pixel(1, 0).0[0], 200);
+        }
+
+        #[test]
+        fn component_operations_work_inside_pipeline() {
+            let input = mask_with_three_components();
+            let result = apply_operations(
+                &input,
+                &[MaskOperation::KeepNLargestComponents {
+                    count: 1,
+                    threshold: 128,
+                }],
+            );
+
+            assert_eq!(result.get_pixel(0, 0).0[0], 200);
+            assert_eq!(result.get_pixel(5, 0).0[0], 0);
+        }
+    }
+
     mod dilate_euclidean {
         use super::*;
 
@@ -1723,6 +1959,40 @@ mod tests {
                     MaskOperation::FillHoles { threshold: 100 }
                 ));
             }
+
+            #[test]
+            fn component_filtering_operations_are_pipeline_steps() {
+                let pipeline = MaskPipeline::new()
+                    .threshold_with(100)
+                    .keep_largest_component()
+                    .keep_n_largest_components(3)
+                    .drop_components_below_area(12.0);
+                let ops = pipeline.operations();
+
+                assert_eq!(ops.len(), 4);
+                assert!(matches!(ops[0], MaskOperation::Threshold { value: 100 }));
+                assert!(matches!(
+                    ops[1],
+                    MaskOperation::KeepNLargestComponents {
+                        count: 1,
+                        threshold: 1
+                    }
+                ));
+                assert!(matches!(
+                    ops[2],
+                    MaskOperation::KeepNLargestComponents {
+                        count: 3,
+                        threshold: 1
+                    }
+                ));
+                assert!(matches!(
+                    ops[3],
+                    MaskOperation::DropComponentsBelowArea {
+                        min_area,
+                        threshold: 1
+                    } if (min_area - 12.0).abs() < f32::EPSILON
+                ));
+            }
         }
     }
 
@@ -2015,6 +2285,41 @@ mod tests {
                     ] if (*sigma - 2.0).abs() < f32::EPSILON
                         && (*dilation_radius - 3.0).abs() < f32::EPSILON
                         && (*erosion_radius - 4.0).abs() < f32::EPSILON
+                ));
+            }
+
+            #[test]
+            fn component_filtering_methods_add_operations() {
+                let defaults = MaskProcessingDefaults {
+                    mask_threshold: 180,
+                    ..MaskProcessingDefaults::default()
+                };
+                let handle = MaskHandle {
+                    rgb_image: Arc::new(RgbImage::from_pixel(1, 1, Rgb([255, 255, 255]))),
+                    mask: GrayImage::from_pixel(1, 1, Luma([255])),
+                    mask_processing_defaults: defaults,
+                    operations: Vec::new(),
+                }
+                .keep_largest_component()
+                .keep_n_largest_components(2)
+                .drop_components_below_area(8.0);
+
+                assert!(matches!(
+                    handle.operations.as_slice(),
+                    [
+                        MaskOperation::KeepNLargestComponents {
+                            count: 1,
+                            threshold: 180
+                        },
+                        MaskOperation::KeepNLargestComponents {
+                            count: 2,
+                            threshold: 180
+                        },
+                        MaskOperation::DropComponentsBelowArea {
+                            min_area,
+                            threshold: 180
+                        }
+                    ] if (*min_area - 8.0).abs() < f32::EPSILON
                 ));
             }
         }

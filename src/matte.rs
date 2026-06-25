@@ -279,6 +279,44 @@ impl MatteHandle {
         self
     }
 
+    /// Keep only the largest connected foreground component.
+    ///
+    /// **Note**: Component filtering typically works best on binary masks. Consider calling
+    /// [`threshold`](MatteHandle::threshold) before `keep_largest_component` if working with a soft matte.
+    pub fn keep_largest_component(self) -> Self {
+        self.keep_n_largest_components(1)
+    }
+
+    /// Keep the largest `count` connected foreground components.
+    ///
+    /// **Note**: Component filtering typically works best on binary masks. Consider calling
+    /// [`threshold`](MatteHandle::threshold) before `keep_n_largest_components` if working with a soft matte.
+    pub fn keep_n_largest_components(mut self, count: usize) -> Self {
+        self.operations.push(MaskOperation::KeepNLargestComponents {
+            count,
+            threshold: self.mask_processing_defaults.mask_threshold,
+        });
+        self
+    }
+
+    /// Drop connected foreground components below `min_area` pixels.
+    ///
+    /// **Note**: Component filtering typically works best on binary masks. Consider calling
+    /// [`threshold`](MatteHandle::threshold) before `drop_components_below_area` if working with a soft matte.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `min_area` is negative or NaN.
+    pub fn drop_components_below_area(mut self, min_area: f32) -> Self {
+        crate::mask::assert_nonnegative_area(min_area);
+        self.operations
+            .push(MaskOperation::DropComponentsBelowArea {
+                min_area,
+                threshold: self.mask_processing_defaults.mask_threshold,
+            });
+        self
+    }
+
     /// Process the raw matte with the accumulated operations.
     pub fn processed(self) -> OutlineResult<MaskHandle> {
         self.process_with_pipeline(None)
@@ -498,6 +536,35 @@ mod tests {
         assert!(matches!(
             handle.operations.as_slice(),
             [MaskOperation::FillHoles { threshold: 180 }]
+        ));
+    }
+
+    #[test]
+    fn matte_handle_component_filtering_methods_add_operations() {
+        let handle = matte_handle()
+            .keep_largest_component()
+            .keep_n_largest_components(2)
+            .drop_components_below_area(8.0);
+
+        assert!(matches!(
+            handle.operations.as_slice(),
+            [
+                MaskOperation::KeepNLargestComponents {
+                    count: 1,
+                    threshold
+                },
+                MaskOperation::KeepNLargestComponents {
+                    count: 2,
+                    threshold: second_threshold
+                },
+                MaskOperation::DropComponentsBelowArea {
+                    min_area,
+                    threshold: area_threshold
+                }
+            ] if *threshold == MaskProcessingDefaults::default().mask_threshold
+                && *second_threshold == MaskProcessingDefaults::default().mask_threshold
+                && (*min_area - 8.0).abs() < f32::EPSILON
+                && *area_threshold == MaskProcessingDefaults::default().mask_threshold
         ));
     }
 
