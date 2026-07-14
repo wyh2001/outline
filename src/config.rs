@@ -1,5 +1,7 @@
+#[cfg(any(feature = "backend-ort", feature = "backend-rten"))]
 use std::path::{Path, PathBuf};
 
+#[cfg(any(feature = "backend-ort", feature = "backend-rten"))]
 use image::imageops::FilterType;
 
 /// Environment variable name for specifying the model path.
@@ -12,6 +14,7 @@ pub const ENV_MODEL_PATH: &str = "OUTLINE_MODEL_PATH";
 pub const DEFAULT_MODEL_PATH: &str = "model.onnx";
 
 /// Inference backend used to execute the model.
+#[cfg(any(feature = "backend-ort", feature = "backend-rten"))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[non_exhaustive]
 pub enum InferenceBackend {
@@ -61,6 +64,7 @@ impl ModelInputSize {
 /// to customize settings.
 ///
 /// This struct is non-exhaustive; use [`new`](InferenceSettings::new) to construct it.
+#[cfg(any(feature = "backend-ort", feature = "backend-rten"))]
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct InferenceSettings {
@@ -80,6 +84,7 @@ pub struct InferenceSettings {
     intra_threads: Option<usize>,
 }
 
+#[cfg(any(feature = "backend-ort", feature = "backend-rten"))]
 impl InferenceSettings {
     /// Create new inference settings with default values.
     pub fn new(model_path: impl Into<PathBuf>) -> Self {

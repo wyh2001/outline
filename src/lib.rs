@@ -8,6 +8,8 @@
 //! # Quick Start
 //!
 //! ```no_run
+//! # #[cfg(any(feature = "backend-ort", feature = "backend-rten"))]
+//! # {
 //! use outline::Outline;
 //!
 //! let outline = Outline::new("model.onnx");
@@ -21,6 +23,7 @@
 //! // Process the mask and save it
 //! let mask = matte.blur().threshold().processed()?;
 //! mask.save("mask.png")?;
+//! # }
 //! # Ok::<_, outline::OutlineError>(())
 //! ```
 //!
@@ -32,14 +35,14 @@
 //! If your environment needs a different runtime strategy, `outline-core` exposes the supported
 //! non-default paths directly. These features are additive. If `ort-load-dynamic` is enabled,
 //! `ort` skips build-time linking and loads ONNX Runtime at runtime. Otherwise, build-time
-//! linking uses the enabled inputs in order: `ort-pkg-config`, [`runtime::ENV_ORT_LIB_LOCATION`],
+//! linking uses the enabled inputs in order: `ort-pkg-config`, `runtime::ENV_ORT_LIB_LOCATION`,
 //! then `ort-download-binaries`.
 //! - `ort-pkg-config`: discover a system ONNX Runtime via `pkg-config`
 //! - `ort-load-dynamic`: load a `.dll`/`.so`/`.dylib` at runtime via the
-//!   `runtime::init_onnx_runtime_from` helper in the [`runtime`] module
-//! - [`runtime::ENV_ORT_DYLIB_PATH`]: choose the shared library used by dynamic loading
-//! - [`runtime::ENV_ORT_LIB_LOCATION`]: link against a custom ONNX Runtime build
-//! - [`runtime::ENV_ORT_PREFER_DYNAMIC_LINK`]: prefer shared-library linking for a custom build
+//!   `runtime::init_onnx_runtime_from` helper in the `runtime` module
+//! - `runtime::ENV_ORT_DYLIB_PATH`: choose the shared library used by dynamic loading
+//! - `runtime::ENV_ORT_LIB_LOCATION`: link against a custom ONNX Runtime build
+//! - `runtime::ENV_ORT_PREFER_DYNAMIC_LINK`: prefer shared-library linking for a custom build
 //!
 //! Setting `default-features = false` also disables the default backend selection. Use it together
 //! with `backend-ort` plus one ONNX Runtime strategy, or with the experimental `backend-rten`
@@ -52,8 +55,21 @@
 
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
-#[cfg(not(any(feature = "backend-ort", feature = "backend-rten")))]
-compile_error!("enable at least one inference backend feature: `backend-ort` or `backend-rten`.");
+#[cfg(not(any(
+    feature = "backend-ort",
+    feature = "backend-ort-web",
+    feature = "backend-rten"
+)))]
+compile_error!(
+    "enable at least one inference backend feature: `backend-ort`, `backend-ort-web`, or `backend-rten`."
+);
+
+#[cfg(all(
+    feature = "backend-ort-web",
+    not(target_arch = "wasm32"),
+    not(any(feature = "backend-ort", feature = "backend-rten"))
+))]
+compile_error!("`backend-ort-web` requires the `wasm32-unknown-unknown` target.");
 
 mod config;
 mod error;
@@ -65,12 +81,16 @@ mod matte;
 #[cfg(feature = "backend-ort")]
 pub mod runtime;
 mod vectorizer;
+#[cfg(all(target_arch = "wasm32", feature = "backend-ort-web"))]
+mod web;
 
 #[doc(inline)]
 pub use crate::config::{
-    DEFAULT_MODEL_PATH, ENV_MODEL_PATH, ErosionBorderMode, InferenceBackend, InferenceSettings,
-    MaskProcessingDefaults, ModelInputSize,
+    DEFAULT_MODEL_PATH, ENV_MODEL_PATH, ErosionBorderMode, MaskProcessingDefaults, ModelInputSize,
 };
+#[cfg(any(feature = "backend-ort", feature = "backend-rten"))]
+#[doc(inline)]
+pub use crate::config::{InferenceBackend, InferenceSettings};
 #[doc(inline)]
 pub use crate::error::{OutlineError, OutlineResult};
 #[doc(inline)]
@@ -84,18 +104,27 @@ pub use crate::mask::{
 #[doc(inline)]
 pub use crate::matte::{InferencedMatte, MatteHandle};
 pub use vectorizer::MaskVectorizer;
+#[cfg(all(target_arch = "wasm32", feature = "backend-ort-web"))]
+#[cfg_attr(docsrs, doc(cfg(feature = "backend-ort-web")))]
+#[doc(inline)]
+pub use web::WebOutline;
 
 #[cfg(feature = "vectorizer-vtracer")]
 #[cfg_attr(docsrs, doc(cfg(feature = "vectorizer-vtracer")))]
 #[doc(inline)]
 pub use vectorizer::vtracer::{TraceOptions, VtracerSvgVectorizer, trace_to_svg_string};
 
+#[cfg(any(feature = "backend-ort", feature = "backend-rten"))]
 use std::path::{Path, PathBuf};
+#[cfg(any(feature = "backend-ort", feature = "backend-rten"))]
 use std::sync::{Arc, Mutex};
 
+#[cfg(any(feature = "backend-ort", feature = "backend-rten"))]
 use image::imageops::FilterType;
+#[cfg(any(feature = "backend-ort", feature = "backend-rten"))]
 use image::{DynamicImage, RgbImage, RgbaImage};
 
+#[cfg(any(feature = "backend-ort", feature = "backend-rten"))]
 use crate::inference::{CachedInferenceSession, load_rgb_from_memory_with_orientation};
 
 /// Entry point for configuring and running background matting inference.
@@ -105,6 +134,7 @@ use crate::inference::{CachedInferenceSession, load_rgb_from_memory_with_orienta
 /// processing, then call [`for_image`](Outline::for_image) to run inference on individual images.
 ///
 /// Each `Outline` instance lazily initializes and reuses its ONNX Runtime session.
+#[cfg(any(feature = "backend-ort", feature = "backend-rten"))]
 #[derive(Debug)]
 pub struct Outline {
     /// Inference settings for model and image handling.
@@ -115,6 +145,7 @@ pub struct Outline {
     cached_session: Mutex<Option<Arc<CachedInferenceSession>>>,
 }
 
+#[cfg(any(feature = "backend-ort", feature = "backend-rten"))]
 impl Clone for Outline {
     fn clone(&self) -> Self {
         Self {
@@ -125,6 +156,7 @@ impl Clone for Outline {
     }
 }
 
+#[cfg(any(feature = "backend-ort", feature = "backend-rten"))]
 impl Outline {
     /// Create a new `Outline` instance with the given model path and default settings.
     pub fn new(model_path: impl Into<PathBuf>) -> Self {
@@ -271,11 +303,11 @@ impl Outline {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, any(feature = "backend-ort", feature = "backend-rten")))]
 #[path = "../tests/support/tiny_onnx.rs"]
 mod tiny_onnx;
 
-#[cfg(test)]
+#[cfg(all(test, any(feature = "backend-ort", feature = "backend-rten")))]
 mod tests {
     use super::*;
     use std::sync::Mutex;

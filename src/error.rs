@@ -20,6 +20,10 @@ pub enum OutlineError {
     #[cfg(feature = "backend-ort")]
     #[error("ONNX Runtime error: {0}")]
     Ort(#[from] ort::Error),
+    /// ONNX Runtime Web failed to load its browser runtime.
+    #[cfg(all(target_arch = "wasm32", feature = "backend-ort-web"))]
+    #[error("ONNX Runtime Web error: {0}")]
+    OrtWeb(#[from] ort_web::Error),
     /// RTen model loading failed.
     #[cfg(feature = "backend-rten")]
     #[error("RTen model load failed: {0}")]

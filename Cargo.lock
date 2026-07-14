@@ -1505,6 +1505,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "ort-web"
+version = "0.2.1+1.24"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bbbfb28fde2a1443c2905a2a523a722f78b0cd7ffa677bebcd3d2d25bd959862"
+dependencies = [
+ "js-sys",
+ "ort",
+ "ort-sys",
+ "serde",
+ "serde-wasm-bindgen",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+]
+
+[[package]]
 name = "outline-core"
 version = "0.2.0"
 dependencies = [
@@ -1513,8 +1529,10 @@ dependencies = [
  "image 0.25.10",
  "imageproc",
  "indicatif",
+ "js-sys",
  "ndarray",
  "ort",
+ "ort-web",
  "proptest",
  "rten",
  "sha2",
@@ -1523,6 +1541,8 @@ dependencies = [
  "ureq",
  "visioncortex",
  "vtracer",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
 ]
 
 [[package]]
@@ -2182,6 +2202,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9a8e94ea7f378bd32cbbd37198a4a91436180c5bb472411e48b5ec2e2124ae9e"
 dependencies = [
  "serde_core",
+ "serde_derive",
+]
+
+[[package]]
+name = "serde-wasm-bindgen"
+version = "0.6.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8302e169f0eddcc139c70f139d19d6467353af16f9fce27e8c30158036a1e16b"
+dependencies = [
+ "js-sys",
+ "serde",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -2625,6 +2657,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "wasm-bindgen-futures"
+version = "0.4.71"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "96492d0d3ffba25305a7dc88720d250b1401d7edca02cc3bcd50633b424673b8"
+dependencies = [
+ "js-sys",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "wasm-bindgen-macro"
 version = "0.2.121"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2688,6 +2730,16 @@ dependencies = [
  "hashbrown 0.15.5",
  "indexmap",
  "semver",
+]
+
+[[package]]
+name = "web-sys"
+version = "0.3.98"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4b572dff8bcf38bad0fa19729c89bb5748b2b9b1d8be70cf90df697e3a8f32aa"
+dependencies = [
+ "js-sys",
+ "wasm-bindgen",
 ]
 
 [[package]]

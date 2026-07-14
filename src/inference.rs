@@ -1,6 +1,7 @@
 use std::convert::TryFrom;
 use std::io;
 use std::io::Cursor;
+#[cfg(any(feature = "backend-ort", feature = "backend-rten"))]
 use std::path::Path;
 #[cfg(feature = "backend-ort")]
 use std::sync::Mutex;
@@ -8,7 +9,11 @@ use std::sync::Mutex;
 use image::imageops::FilterType;
 use image::{DynamicImage, GrayImage, ImageBuffer, ImageDecoder, ImageReader, Luma, RgbImage};
 use ndarray::{Array2, Array4, ArrayViewD, Axis, Ix2};
-#[cfg(feature = "backend-rten")]
+#[cfg(any(
+    test,
+    feature = "backend-rten",
+    all(target_arch = "wasm32", feature = "backend-ort-web")
+))]
 use ndarray::{ArrayD, IxDyn};
 #[cfg(feature = "backend-ort")]
 use ort::session::Session;
@@ -19,8 +24,12 @@ use ort::value::Tensor;
 
 #[cfg(any(feature = "backend-ort", feature = "backend-rten"))]
 use crate::config::InferenceBackend;
+#[cfg(any(feature = "backend-ort", feature = "backend-rten"))]
 use crate::config::InferenceSettings;
-use crate::error::{OutlineError, OutlineResult};
+use crate::config::ModelInputSize;
+#[cfg(any(feature = "backend-ort", feature = "backend-rten"))]
+use crate::error::OutlineError;
+use crate::error::OutlineResult;
 use crate::mask::array_to_gray_image;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -43,11 +52,13 @@ pub const DEFAULT_MODEL_INPUT_SPEC: ModelInputSpec = ModelInputSpec {
 };
 
 /// Cached inference entry point for the full matte pipeline.
+#[cfg(any(feature = "backend-ort", feature = "backend-rten"))]
 #[derive(Debug)]
 pub struct CachedInferenceSession {
     backend: BackendSession,
 }
 
+#[cfg(any(feature = "backend-ort", feature = "backend-rten"))]
 #[derive(Debug)]
 enum BackendSession {
     #[cfg(feature = "backend-ort")]
@@ -56,6 +67,7 @@ enum BackendSession {
     Rten(Box<RtenInferenceSession>),
 }
 
+#[cfg(any(feature = "backend-ort", feature = "backend-rten"))]
 impl BackendSession {
     fn new(settings: &InferenceSettings) -> OutlineResult<Self> {
         if !settings.model_path().is_file() {
@@ -100,6 +112,7 @@ impl BackendSession {
     }
 }
 
+#[cfg(any(feature = "backend-ort", feature = "backend-rten"))]
 impl CachedInferenceSession {
     /// Create a cached inference session.
     pub fn new(settings: &InferenceSettings) -> OutlineResult<Self> {
@@ -126,17 +139,15 @@ impl CachedInferenceSession {
     ) -> OutlineResult<(RgbImage, GrayImage)> {
         let orig_w = rgb_input.width();
         let orig_h = rgb_input.height();
-        let mut input_spec = self.backend.input_spec();
-        if let Some(size) = settings.model_input_size() {
-            input_spec.width = size.width();
-            input_spec.height = size.height();
-        }
-
-        let input_array =
-            preprocess_image_to_array(&rgb_input, settings.input_resize_filter(), input_spec)?;
+        let input_array = prepare_model_input(
+            &rgb_input,
+            self.backend.input_spec(),
+            settings.model_input_size(),
+            settings.input_resize_filter(),
+        )?;
         let matte_hw = self.backend.run_model(input_array)?;
-        let matte_orig = resize_matte(&matte_hw, orig_w, orig_h, settings.output_resize_filter())?;
-        let raw_matte = array_to_gray_image(&matte_orig);
+        let raw_matte =
+            finish_model_matte(&matte_hw, orig_w, orig_h, settings.output_resize_filter())?;
 
         Ok((rgb_input, raw_matte))
     }
@@ -233,17 +244,7 @@ fn infer_model_input_spec(session: &Session) -> Option<ModelInputSpec> {
     let input = session.inputs().first()?;
     let shape = input.dtype().tensor_shape()?;
     let dims: &[i64] = shape;
-
-    if dims.len() >= 4 {
-        if let Some(spec) = infer_nchw_spec(dims) {
-            return Some(spec);
-        }
-        if let Some(spec) = infer_nhwc_spec(dims) {
-            return Some(spec);
-        }
-    }
-
-    None
+    infer_model_input_spec_from_dims(dims)
 }
 
 /// Try to figure out the model input spec from the RTen model and falls back to the default.
@@ -264,16 +265,16 @@ fn infer_rten_model_input_spec(model: &rten::Model) -> Option<ModelInputSpec> {
         })
         .collect();
 
-    if dims.len() >= 4 {
-        if let Some(spec) = infer_nchw_spec(&dims) {
-            return Some(spec);
-        }
-        if let Some(spec) = infer_nhwc_spec(&dims) {
-            return Some(spec);
-        }
+    infer_model_input_spec_from_dims(&dims)
+}
+
+/// Infer a supported image model input layout from declared tensor dimensions.
+pub(crate) fn infer_model_input_spec_from_dims(dims: &[i64]) -> Option<ModelInputSpec> {
+    if dims.len() < 4 {
+        return None;
     }
 
-    None
+    infer_nchw_spec(dims).or_else(|| infer_nhwc_spec(dims))
 }
 
 #[cfg(feature = "backend-rten")]
@@ -331,7 +332,43 @@ fn positive_dim_to_usize(dim: i64) -> Option<usize> {
     }
 }
 
+/// Prepare an RGB image for inference using the model-declared shape plus an optional override.
+pub(crate) fn prepare_model_input(
+    rgb: &RgbImage,
+    mut input_spec: ModelInputSpec,
+    model_input_size: Option<ModelInputSize>,
+    filter: FilterType,
+) -> OutlineResult<Array4<f32>> {
+    if let Some(size) = model_input_size {
+        input_spec.width = size.width();
+        input_spec.height = size.height();
+    }
+
+    preprocess_image_to_array(rgb, filter, input_spec)
+}
+
+/// Resize a model's H×W output to the source image and convert it to an 8-bit matte.
+pub(crate) fn finish_model_matte(
+    matte_hw: &Array2<f32>,
+    target_w: u32,
+    target_h: u32,
+    filter: FilterType,
+) -> OutlineResult<GrayImage> {
+    let resized = resize_matte(matte_hw, target_w, target_h, filter)?;
+    Ok(array_to_gray_image(&resized))
+}
+
+/// Rebuild a dynamically shaped tensor returned by a backend from its flat values.
+#[cfg(any(test, all(target_arch = "wasm32", feature = "backend-ort-web")))]
+pub(crate) fn array_from_tensor_parts(
+    dimensions: &[usize],
+    values: Vec<f32>,
+) -> OutlineResult<ArrayD<f32>> {
+    Ok(ArrayD::from_shape_vec(IxDyn(dimensions), values)?)
+}
+
 /// Load an RGB image from the given path, applying orientation from EXIF data.
+#[cfg(any(feature = "backend-ort", feature = "backend-rten"))]
 fn load_rgb_with_orientation(path: &Path) -> OutlineResult<RgbImage> {
     let mut decoder = ImageReader::open(path)?.into_decoder()?;
     let orientation = decoder.orientation()?;
@@ -495,5 +532,62 @@ mod tests {
             .expect("memory decode should succeed");
         assert_eq!(decoded.dimensions(), (4, 1));
         assert_eq!(decoded.get_pixel(0, 0).0, [10, 20, 30]);
+    }
+
+    #[test]
+    fn shared_preprocessing_applies_size_override_without_changing_layout() {
+        let rgb = RgbImage::from_pixel(4, 3, Rgb([127, 127, 127]));
+        let input = prepare_model_input(
+            &rgb,
+            ModelInputSpec {
+                height: 8,
+                width: 9,
+                layout: ChannelLayout::Nhwc,
+            },
+            Some(ModelInputSize::new(2, 5)),
+            FilterType::Nearest,
+        )
+        .expect("shared preprocessing should accept an explicit size");
+
+        assert_eq!(input.shape(), &[1, 2, 5, 3]);
+    }
+
+    #[test]
+    fn shared_matte_finish_restores_source_dimensions() {
+        let output = Array2::from_elem((2, 2), 1.0);
+        let matte = finish_model_matte(&output, 7, 4, FilterType::Nearest)
+            .expect("shared matte finishing should resize model output");
+
+        assert_eq!(matte.dimensions(), (7, 4));
+        assert!(matte.pixels().all(|pixel| pixel.0 == [255]));
+    }
+
+    #[test]
+    fn shared_input_spec_parser_supports_nchw_and_nhwc() {
+        assert_eq!(
+            infer_model_input_spec_from_dims(&[1, 3, 320, 512]),
+            Some(ModelInputSpec {
+                height: 320,
+                width: 512,
+                layout: ChannelLayout::Nchw,
+            })
+        );
+        assert_eq!(
+            infer_model_input_spec_from_dims(&[1, 240, 400, 3]),
+            Some(ModelInputSpec {
+                height: 240,
+                width: 400,
+                layout: ChannelLayout::Nhwc,
+            })
+        );
+    }
+
+    #[test]
+    fn shared_tensor_parts_parser_validates_element_count() {
+        let tensor = array_from_tensor_parts(&[1, 1, 2, 2], vec![0.0, 0.25, 0.5, 1.0])
+            .expect("matching tensor dimensions should parse");
+        assert_eq!(tensor.shape(), &[1, 1, 2, 2]);
+
+        assert!(array_from_tensor_parts(&[1, 1, 2, 2], vec![0.0; 3]).is_err());
     }
 }

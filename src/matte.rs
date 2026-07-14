@@ -17,7 +17,7 @@ use crate::{MaskVectorizer, OutlineResult};
 
 /// Inference result containing the original RGB image and raw matte prediction.
 ///
-/// Returned by [`crate::Outline::for_image`] after running model inference.
+/// Returned by an Outline inference backend after running model inference.
 ///
 /// # Example
 /// ```no_run
