@@ -1,8 +1,8 @@
 #![cfg(feature = "ort-load-dynamic")]
 
+#[path = "support/runtime_dynamic.rs"]
+mod runtime_dynamic;
 mod support;
-
-use support::runtime_dynamic;
 
 #[ignore = "requires OUTLINE_TEST_ORT_DYLIB and ORT_DYLIB_PATH=/path/to/libonnxruntime.{dylib,so,dll}"]
 #[test]
