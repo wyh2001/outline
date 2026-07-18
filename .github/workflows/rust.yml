@@ -59,6 +59,19 @@ jobs:
         if: matrix.name == 'all-features'
         run: cargo test --verbose ${{ matrix.args }} --no-run
 
+  wasm-web:
+    name: WASM web backend
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the WASM target
+        run: rustup target add wasm32-unknown-unknown
+      - name: Check the browser backend
+        run: >-
+          cargo check --verbose --target wasm32-unknown-unknown
+          --no-default-features --features backend-ort-web
+
   prepare-ort-runtime:
     runs-on: ubuntu-latest
 
