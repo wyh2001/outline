@@ -30,6 +30,9 @@ extern "C" {
     #[wasm_bindgen(catch, structural, method, js_name = run)]
     async fn run(this: &InferenceSession, feeds: JsValue) -> Result<JsValue, JsValue>;
 
+    #[wasm_bindgen(catch, structural, method, js_name = release)]
+    async fn release(this: &InferenceSession) -> Result<(), JsValue>;
+
     #[wasm_bindgen(js_namespace = ort)]
     type Tensor;
 
@@ -42,6 +45,10 @@ extern "C" {
 /// `WebOutline` loads and caches one model session. Construct it from a model URL or model bytes,
 /// then reuse the same value for multiple images. Image preprocessing, matte resizing, and the
 /// returned [`InferencedMatte`] mask API are shared with the native `Outline` pipeline.
+///
+/// Applications that replace models or create multiple sessions should call
+/// [`WebOutline::release`] when a session is no longer needed instead of relying on JavaScript
+/// garbage collection.
 ///
 /// This type is only available for `wasm32` with the `backend-ort-web` feature.
 pub struct WebOutline {
@@ -89,7 +96,7 @@ impl WebOutline {
         let session = InferenceSession::create_from_url(model_url)
             .await
             .map_err(|error| js_error("failed to create ONNX Runtime Web session", error))?;
-        Self::from_session(session)
+        Self::from_session(session).await
     }
 
     /// Load a model from in-memory ONNX bytes after initializing the browser runtime.
@@ -110,24 +117,49 @@ impl WebOutline {
         let session = InferenceSession::create_from_bytes(&bytes)
             .await
             .map_err(|error| js_error("failed to create ONNX Runtime Web session", error))?;
-        Self::from_session(session)
+        Self::from_session(session).await
     }
 
-    fn from_session(session: InferenceSession) -> OutlineResult<Self> {
-        let input_name = first_declared_name(&session, "inputNames", "input")?;
-        let output_name = first_declared_name(&session, "outputNames", "output")?;
-        let model_input_spec = determine_web_model_input_spec(&session, &input_name)?;
+    fn read_session_metadata(
+        session: &InferenceSession,
+    ) -> OutlineResult<(String, String, ModelInputSpec)> {
+        let input_name = first_declared_name(session, "inputNames", "input")?;
+        let output_name = first_declared_name(session, "outputNames", "output")?;
+        let model_input_spec = determine_web_model_input_spec(session, &input_name)?;
+        Ok((input_name, output_name, model_input_spec))
+    }
 
-        Ok(Self {
-            session,
-            input_name,
-            output_name,
-            model_input_spec,
-            model_input_size: None,
-            input_resize_filter: FilterType::Triangle,
-            output_resize_filter: FilterType::Lanczos3,
-            mask_processing_defaults: MaskProcessingDefaults::default(),
-        })
+    async fn from_session(session: InferenceSession) -> OutlineResult<Self> {
+        match Self::read_session_metadata(&session) {
+            Ok((input_name, output_name, model_input_spec)) => Ok(Self {
+                session,
+                input_name,
+                output_name,
+                model_input_spec,
+                model_input_size: None,
+                input_resize_filter: FilterType::Triangle,
+                output_resize_filter: FilterType::Lanczos3,
+                mask_processing_defaults: MaskProcessingDefaults::default(),
+            }),
+            Err(error) => {
+                // Preserve the metadata error that prevented construction while making a
+                // best-effort attempt to release the session that was already created.
+                let _ = session.release().await;
+                Err(error)
+            }
+        }
+    }
+
+    /// Release the cached ONNX Runtime Web session and its underlying resources.
+    ///
+    /// Applications that replace models or repeatedly construct `WebOutline` values should call
+    /// this method instead of relying on JavaScript garbage collection. The value is consumed so
+    /// it cannot be used for inference after the session has been released.
+    pub async fn release(self) -> OutlineResult<()> {
+        self.session
+            .release()
+            .await
+            .map_err(|error| js_error("failed to release ONNX Runtime Web session", error))
     }
 
     /// Override the height and width used for model input.
@@ -309,6 +341,9 @@ fn determine_web_model_input_spec(
 ) -> OutlineResult<ModelInputSpec> {
     let metadata = Reflect::get(session.as_ref(), &JsValue::from_str("inputMetadata"))
         .map_err(|error| js_error("failed to read ONNX Runtime Web input metadata", error))?;
+    if metadata.is_null() || metadata.is_undefined() {
+        return Ok(DEFAULT_MODEL_INPUT_SPEC);
+    }
     let entry = if Array::is_array(&metadata) {
         Reflect::get(&metadata, &JsValue::from_f64(0.0))
     } else {
