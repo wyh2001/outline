@@ -8,14 +8,14 @@ env:
   CARGO_TERM_COLOR: always
   # ONNX Runtime (Linux x64) archive used by the runtime-strategy CI jobs.
   # Cached under `ORT_ROOT`, unpacked to `ORT_DIR`, and shared as `ORT_ASSET_ARCHIVE`.
-  ORT_VERSION: 1.24.4
+  ORT_VERSION: 1.27.1
   ORT_ROOT: .ci
   ORT_DIR: .ci/onnxruntime
   ORT_PKGCONFIG_DIR: .ci/pkgconfig
   ORT_ASSET_ARCHIVE: .ci/ort-assets.tgz
-  ORT_ARCHIVE: onnxruntime-linux-x64-1.24.4.tgz
-  ORT_URL: https://github.com/microsoft/onnxruntime/releases/download/v1.24.4/onnxruntime-linux-x64-1.24.4.tgz
-  ORT_SHA256: 3a211fbea252c1e66290658f1b735b772056149f28321e71c308942cdb54b747
+  ORT_ARCHIVE: onnxruntime-linux-x64-1.27.1.tgz
+  ORT_URL: https://github.com/microsoft/onnxruntime/releases/download/v1.27.1/onnxruntime-linux-x64-1.27.1.tgz
+  ORT_SHA256: 25b1ef1fea1acd210d63f8f24dc870ad6e077795ce1f54876252c6d3803c15af
 
 jobs:
   lint:

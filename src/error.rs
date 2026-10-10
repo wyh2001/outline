@@ -20,6 +20,10 @@ pub enum OutlineError {
     #[cfg(feature = "backend-ort")]
     #[error("ONNX Runtime error: {0}")]
     Ort(#[from] ort::Error),
+    /// ONNX Runtime shared-library loading failed.
+    #[cfg(all(feature = "ort-load-dynamic", not(target_arch = "wasm32")))]
+    #[error("ONNX Runtime dynamic loading failed: {0}")]
+    OrtLoadDynamic(#[from] ort::LoadDynamicError),
     /// ONNX Runtime Web failed to load its browser runtime.
     #[cfg(all(target_arch = "wasm32", feature = "backend-ort-web"))]
     #[error("ONNX Runtime Web error: {0}")]

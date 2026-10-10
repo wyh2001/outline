@@ -9,4 +9,5 @@ export OUTLINE_TEST_ORT_DYLIB="${ort_lib_dir}/libonnxruntime.so"
 export ORT_DYLIB_PATH="${ort_lib_dir}/libonnxruntime.so"
 
 cargo test --verbose --no-default-features --features ort-load-dynamic --lib
+cargo test --verbose --no-default-features --features ort-load-dynamic --test runtime_dynamic_errors
 cargo test --verbose --test runtime_dynamic --test runtime_dynamic_env --no-default-features --features ort-load-dynamic -- --ignored
