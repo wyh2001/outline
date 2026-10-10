@@ -4,8 +4,19 @@ version = "0.2.0"
 edition = "2024"
 repository = "https://github.com/wyh2001/outline"
 license = "MIT"
-description = "Image background removal with flexible mask processing options"
+description = "Image background removal with flexible mask processing"
 exclude = [".github/**", "dist-workspace.toml"]
+keywords = [
+  "background-removal",
+  "onnx",
+  "image-processing",
+  "mask-processing",
+]
+categories = [
+  "computer-vision",
+  "multimedia::images",
+  "command-line-utilities",
+]
 
 [features]
 default = ["backend-ort", "ort-download-binaries"]
