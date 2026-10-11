@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0] - 2026-10-11
+
+- Add a browser ONNX Runtime Web backend for `wasm32` targets behind the `backend-ort-web` feature.
+- Add connected-component filtering to mask processing: `keep_largest_component()`, `keep_n_largest_components()`, and `drop_components_below_area()` on `MaskPipeline`, `MaskHandle`, and `MatteHandle`.
+- Bump `ort` to `2.0.0-rc.13`.
+- Bump `rten` to `0.27.0`.
+
 ## [0.2.0] - 2026-06-12
 
 - Breaking: `save()`, `foreground()`, and `trace()` no longer skip chained mask operations.
