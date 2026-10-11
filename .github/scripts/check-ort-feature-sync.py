@@ -8,7 +8,10 @@ metadata = json.loads(
 root = next(pkg for pkg in metadata["packages"] if pkg["name"] == "outline-core")
 ort = next(pkg for pkg in metadata["packages"] if pkg["name"] == "ort")
 feature_map = root["features"]
-ort_defaults = set(ort["features"]["default"])
+# The API floor is chosen independently for compatibility with older runtimes.
+ort_defaults = {
+    feature for feature in ort["features"]["default"] if not feature.startswith("api-")
+}
 
 enabled = {
     feature
