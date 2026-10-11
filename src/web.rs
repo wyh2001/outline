@@ -51,6 +51,17 @@ extern "C" {
 /// garbage collection.
 ///
 /// This type is only available for `wasm32` with the `backend-ort-web` feature.
+///
+/// # Example
+///
+/// ```no_run
+/// async fn infer_matte(image_bytes: &[u8]) -> outline::OutlineResult<outline::InferencedMatte> {
+///     let model = outline::WebOutline::from_model_url("/models/model.onnx").await?;
+///     let result = model.for_image_bytes(image_bytes).await;
+///     model.release().await?;
+///     result
+/// }
+/// ```
 pub struct WebOutline {
     session: InferenceSession,
     input_name: String,

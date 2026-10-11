@@ -1,5 +1,9 @@
 # Outline
 
+[![Crates.io](https://img.shields.io/crates/v/outline-core.svg)](https://crates.io/crates/outline-core)
+[![Documentation](https://docs.rs/outline-core/badge.svg)](https://docs.rs/outline-core)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 Outline is an image background removal tool with flexible mask processing options.
 
 It is written in Rust, powered by [ONNX Runtime](https://onnxruntime.ai/) ([ort](https://ort.pyke.io/)) and VTracer, and works with U2-Net, BiRefNet, and other ONNX models with a compatible input/output shape.
@@ -26,6 +30,16 @@ cargo add outline-core
 # or use this if VtracerSvgVectorizer is needed:
 cargo add outline-core --features vectorizer-vtracer
 ```
+
+#### Browser / WASM
+
+```bash
+cargo add outline-core --no-default-features --features backend-ort-web
+rustup target add wasm32-unknown-unknown
+cargo build --target wasm32-unknown-unknown
+```
+
+[`WebOutline` API documentation](https://docs.rs/outline-core/latest/wasm32-unknown-unknown/outline/struct.WebOutline.html)
 
 <details>
 <summary><strong>Advanced: Custom ONNX Runtime Setup</strong></summary>
@@ -276,7 +290,7 @@ You can also avoid depending on VTracer directly by implementing the `MaskVector
 ## Next Steps
 
 - Add detailed documentation for library API
-- Expose a WASM version of library API
+- ~~Expose a WASM version of library API~~
 - Improve the CLI syntax for better usability and expressiveness
 - Provide a lightweight GUI for easier use.
 

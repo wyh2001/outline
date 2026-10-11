@@ -48,7 +48,8 @@ path = "src/lib.rs"
 
 [package.metadata.docs.rs]
 no-default-features = true
-features = ["cli", "fetch-model", "ort-load-dynamic"]
+features = ["vectorizer-vtracer", "ort-load-dynamic", "backend-ort-web"]
+additional-targets = ["wasm32-unknown-unknown"]
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
