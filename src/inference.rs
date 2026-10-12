@@ -30,7 +30,6 @@ use crate::config::ModelInputSize;
 #[cfg(any(feature = "backend-ort", feature = "backend-rten"))]
 use crate::error::OutlineError;
 use crate::error::OutlineResult;
-use crate::mask::array_to_gray_image;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChannelLayout {
@@ -147,7 +146,7 @@ impl CachedInferenceSession {
         )?;
         let matte_hw = self.backend.run_model(input_array)?;
         let raw_matte =
-            finish_model_matte(&matte_hw, orig_w, orig_h, settings.output_resize_filter())?;
+            resize_matte_to_gray_image(&matte_hw, orig_w, orig_h, settings.output_resize_filter())?;
 
         Ok((rgb_input, raw_matte))
     }
@@ -347,17 +346,6 @@ pub(crate) fn prepare_model_input(
     preprocess_image_to_array(rgb, filter, input_spec)
 }
 
-/// Resize a model's H×W output to the source image and convert it to an 8-bit matte.
-pub(crate) fn finish_model_matte(
-    matte_hw: &Array2<f32>,
-    target_w: u32,
-    target_h: u32,
-    filter: FilterType,
-) -> OutlineResult<GrayImage> {
-    let resized = resize_matte(matte_hw, target_w, target_h, filter)?;
-    Ok(array_to_gray_image(&resized))
-}
-
 /// Rebuild a dynamically shaped tensor returned by a backend from its flat values.
 #[cfg(any(test, all(target_arch = "wasm32", feature = "backend-ort-web")))]
 pub(crate) fn array_from_tensor_parts(
@@ -476,13 +464,13 @@ pub fn extract_matte_hw(matte: ArrayViewD<f32>) -> OutlineResult<Array2<f32>> {
     Ok(view.into_dimensionality::<Ix2>()?.to_owned())
 }
 
-/// Resample the matte to the requested width and height with the chosen filter.
-pub fn resize_matte(
+/// Resample the matte to the requested width and height with the chosen filter and convert it to an 8-bit matte.
+pub fn resize_matte_to_gray_image(
     matte: &Array2<f32>,
     target_w: u32,
     target_h: u32,
     filter: FilterType,
-) -> OutlineResult<Array2<f32>> {
+) -> OutlineResult<GrayImage> {
     let src_w = matte.shape()[1] as u32;
     let src_h = matte.shape()[0] as u32;
     let mut buffer = ImageBuffer::<Luma<f32>, Vec<f32>>::new(src_w, src_h);
@@ -492,11 +480,10 @@ pub fn resize_matte(
         }
     }
     let resized = image::imageops::resize(&buffer, target_w, target_h, filter);
-    let mut out = Array2::<f32>::zeros((target_h as usize, target_w as usize));
-    for (x, y, pixel) in resized.enumerate_pixels() {
-        out[[y as usize, x as usize]] = pixel[0];
-    }
-    Ok(out)
+    Ok(GrayImage::from_fn(target_w, target_h, |x, y| {
+        let value = resized.get_pixel(x, y)[0].clamp(0.0, 1.0);
+        Luma([(value * 255.0 + 0.5) as u8])
+    }))
 }
 
 #[cfg(test)]
@@ -555,11 +542,106 @@ mod tests {
     #[test]
     fn shared_matte_finish_restores_source_dimensions() {
         let output = Array2::from_elem((2, 2), 1.0);
-        let matte = finish_model_matte(&output, 7, 4, FilterType::Nearest)
+        let matte = resize_matte_to_gray_image(&output, 7, 4, FilterType::Nearest)
             .expect("shared matte finishing should resize model output");
 
         assert_eq!(matte.dimensions(), (7, 4));
         assert!(matte.pixels().all(|pixel| pixel.0 == [255]));
+    }
+
+    #[test]
+    fn matte_finish_clamps_and_rounds_alpha() -> OutlineResult<()> {
+        let matte = Array2::from_shape_vec(
+            (2, 7),
+            vec![
+                f32::NAN,
+                f32::NEG_INFINITY,
+                -1.0,
+                0.0,
+                0.49 / 255.0,
+                0.5 / 255.0,
+                0.51 / 255.0,
+                0.25,
+                0.4,
+                0.5,
+                0.75,
+                1.0,
+                2.0,
+                f32::INFINITY,
+            ],
+        )?;
+        let result = resize_matte_to_gray_image(&matte, 7, 2, FilterType::Nearest)?;
+        assert_eq!(result.dimensions(), (7, 2));
+        assert_eq!(
+            result.as_raw(),
+            &[0, 0, 0, 0, 0, 1, 1, 64, 102, 128, 191, 255, 255, 255]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn matte_finish_preserves_transposed_pixel_positions() -> OutlineResult<()> {
+        let matte = ndarray::arr2(&[[0.0, 0.25, 0.5], [0.75, 1.0, 2.0]]).reversed_axes();
+        assert!(!matte.is_standard_layout());
+        let result = resize_matte_to_gray_image(&matte, 2, 3, FilterType::Nearest)?;
+        assert_eq!(result.dimensions(), (2, 3));
+        assert_eq!(result.as_raw(), &[0, 191, 64, 255, 128, 255]);
+        Ok(())
+    }
+
+    #[test]
+    fn matte_finish_interpolates_alpha_with_triangle_filter() -> OutlineResult<()> {
+        let matte = ndarray::arr2(&[[0.0, 1.0], [1.0, 0.0]]);
+        let result = resize_matte_to_gray_image(&matte, 3, 3, FilterType::Triangle)?;
+        assert_eq!(result.as_raw(), &[0, 128, 255, 128, 128, 128, 255, 128, 0]);
+        Ok(())
+    }
+
+    #[test]
+    fn matte_finish_interpolates_before_quantizing_alpha() -> OutlineResult<()> {
+        let matte = ndarray::arr2(&[[0.1 / 255.0, 0.6 / 255.0], [0.49 / 255.0, 1.49 / 255.0]]);
+        let result = resize_matte_to_gray_image(&matte, 3, 2, FilterType::Triangle)?;
+        // Both input rows round to [0, 1], but their float midpoints round differently.
+        assert_eq!(result.as_raw(), &[0, 0, 1, 0, 1, 1]);
+        Ok(())
+    }
+
+    #[test]
+    fn matte_finish_preserves_constant_alpha_across_filters_and_sizes() -> OutlineResult<()> {
+        let matte = Array2::from_elem((2, 3), 0.25);
+        for filter in [
+            FilterType::Nearest,
+            FilterType::Triangle,
+            FilterType::CatmullRom,
+            FilterType::Gaussian,
+            FilterType::Lanczos3,
+        ] {
+            for (w, h) in [(1, 1), (37, 19), (0, 3), (3, 0)] {
+                let result = resize_matte_to_gray_image(&matte, w, h, filter)?;
+                assert_eq!(result.dimensions(), (w, h));
+                assert!(result.as_raw().iter().all(|&value| value == 64));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn matte_finish_preserves_alpha_at_photo_resolution() -> OutlineResult<()> {
+        let matte = Array2::from_elem((7, 11), 0.25);
+        let result = resize_matte_to_gray_image(&matte, 4000, 3000, FilterType::Lanczos3)?;
+        assert_eq!(result.dimensions(), (4000, 3000));
+        assert!(result.as_raw().iter().all(|&value| value == 64));
+        Ok(())
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn matte_finish_bounds_quantization_error(value in 0.0f32..=1.0f32) {
+            let matte = Array2::from_elem((1, 1), value);
+            let result = resize_matte_to_gray_image(&matte, 1, 1, FilterType::Nearest).unwrap();
+            let restored = result.get_pixel(0, 0)[0] as f32 / 255.0;
+            proptest::prop_assert!((restored - value).abs() <= 0.5 / 255.0 + f32::EPSILON);
+        }
     }
 
     #[test]

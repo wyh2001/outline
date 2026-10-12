@@ -8,7 +8,6 @@ use imageproc::contrast::{ThresholdType, threshold as ip_threshold};
 use imageproc::distance_transform::euclidean_squared_distance_transform;
 use imageproc::filter::gaussian_blur_f32;
 use imageproc::region_labelling::{Connectivity, connected_components};
-use ndarray::Array2;
 
 use crate::MaskVectorizer;
 use crate::OutlineResult;
@@ -224,16 +223,6 @@ impl MaskPipeline {
             });
         self
     }
-}
-
-/// Convert a 2D array of f32 values in [0.0, 1.0] to a grayscale image.
-pub fn array_to_gray_image(array: &Array2<f32>) -> GrayImage {
-    let (h, w) = array.dim();
-    GrayImage::from_fn(w as u32, h as u32, |x, y| {
-        let value = array[[y as usize, x as usize]].clamp(0.0, 1.0);
-        let byte = (value * 255.0 + 0.5) as u8;
-        Luma([byte])
-    })
 }
 
 /// Convert a grayscale image to an RGBA color image.
@@ -1042,7 +1031,6 @@ impl MaskHandle {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ndarray::arr2;
 
     fn gray_image(w: u32, h: u32, value: u8) -> GrayImage {
         GrayImage::from_pixel(w, h, Luma([value]))
@@ -1179,111 +1167,6 @@ mod tests {
                     } else {
                         prop_assert_eq!(out, 0);
                     }
-                }
-            }
-        }
-    }
-
-    mod array_to_gray_image {
-        use super::*;
-
-        mod unit {
-            use super::*;
-
-            #[test]
-            fn all_zeros_black() {
-                let arr = arr2(&[[0.0, 0.0], [0.0, 0.0]]);
-                let result = array_to_gray_image(&arr);
-                for px in result.pixels() {
-                    assert_eq!(px.0[0], 0);
-                }
-            }
-
-            #[test]
-            fn all_ones_white() {
-                let arr = arr2(&[[1.0, 1.0], [1.0, 1.0]]);
-                let result = array_to_gray_image(&arr);
-                for px in result.pixels() {
-                    assert_eq!(px.0[0], 255);
-                }
-            }
-
-            #[test]
-            fn half_value_gray() {
-                let arr = arr2(&[[0.5]]);
-                let result = array_to_gray_image(&arr);
-                // 0.5 * 255 + 0.5 = 128
-                assert_eq!(result.get_pixel(0, 0).0[0], 128);
-            }
-
-            #[test]
-            fn clamps_above_one() {
-                let arr = arr2(&[[2.0]]);
-                let result = array_to_gray_image(&arr);
-                assert_eq!(result.get_pixel(0, 0).0[0], 255);
-            }
-
-            #[test]
-            fn clamps_below_zero() {
-                let arr = arr2(&[[-1.0]]);
-                let result = array_to_gray_image(&arr);
-                assert_eq!(result.get_pixel(0, 0).0[0], 0);
-            }
-
-            #[test]
-            fn dimensions_preserved() {
-                let arr = arr2(&[[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]]);
-                let result = array_to_gray_image(&arr);
-                // ndarray is (rows, cols) = (h, w), image is (w, h)
-                assert_eq!(result.dimensions(), (3, 2));
-            }
-
-            #[test]
-            fn rounding_behavior() {
-                let arr = arr2(&[[0.4]]);
-                let result = array_to_gray_image(&arr);
-                assert_eq!(result.get_pixel(0, 0).0[0], 102); // 0.4 * 255 + 0.5 = 102.5, truncated
-            }
-        }
-
-        mod prop {
-            use super::*;
-            use proptest::prelude::*;
-
-            proptest! {
-                /// array_to_gray_image: any f32 input clamps to [0, 255] range
-                #[test]
-                fn clamps_out_of_range_values(
-                    values in proptest::collection::vec(-10.0f32..10.0f32, 1..100)
-                ) {
-                    // Create a 1D array that we'll reshape - use length as width, height=1
-                    let len = values.len();
-                    let arr = ndarray::Array2::from_shape_vec((1, len), values.clone()).unwrap();
-                    let result = array_to_gray_image(&arr);
-
-                    // Verify clamping: negative values -> 0, values > 1 -> 255
-                    for (i, px) in result.pixels().enumerate() {
-                        let input = values[i];
-                        if input <= 0.0 {
-                            prop_assert_eq!(px.0[0], 0);
-                        } else if input >= 1.0 {
-                            prop_assert_eq!(px.0[0], 255);
-                        }
-                    }
-                    // Dimensions preserved
-                    prop_assert_eq!(result.dimensions(), (len as u32, 1));
-                }
-
-                /// array_to_gray_image: values in [0, 1] map to proportional bytes
-                #[test]
-                fn valid_range_maps_proportionally(value in 0.0f32..=1.0f32) {
-                    let arr = ndarray::arr2(&[[value]]);
-                    let result = array_to_gray_image(&arr);
-                    let byte = result.get_pixel(0, 0).0[0];
-
-                    // Expected: (value * 255.0 + 0.5) as u8
-                    let expected = (value * 255.0 + 0.5) as u8;
-                    prop_assert_eq!(byte, expected);
                 }
             }
         }

@@ -11,8 +11,8 @@ use wasm_bindgen::prelude::*;
 use crate::config::{MaskProcessingDefaults, ModelInputSize};
 use crate::inference::{
     DEFAULT_MODEL_INPUT_SPEC, ModelInputSpec, array_from_tensor_parts, extract_matte_hw,
-    finish_model_matte, infer_model_input_spec_from_dims, load_rgb_from_memory_with_orientation,
-    prepare_model_input,
+    infer_model_input_spec_from_dims, load_rgb_from_memory_with_orientation, prepare_model_input,
+    resize_matte_to_gray_image,
 };
 use crate::{InferencedMatte, OutlineError, OutlineResult};
 
@@ -275,7 +275,7 @@ impl WebOutline {
         let output_dimensions = parse_output_dimensions(&output_dimensions)?;
         let output_array = array_from_tensor_parts(&output_dimensions, output_values)?;
         let matte_hw = extract_matte_hw(output_array.view())?;
-        let raw_matte = finish_model_matte(
+        let raw_matte = resize_matte_to_gray_image(
             &matte_hw,
             original_width,
             original_height,
