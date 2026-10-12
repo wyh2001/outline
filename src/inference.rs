@@ -184,11 +184,11 @@ impl OrtInferenceSession {
 
     /// Execute the model for one preprocessed input array while holding the session lock.
     fn run_model(&self, input_array: Array4<f32>) -> OutlineResult<Array2<f32>> {
+        let input_tensor = Tensor::from_array(input_array)?;
         let mut session = self
             .session
             .lock()
             .map_err(|_| io::Error::other("cached inference session mutex poisoned"))?;
-        let input_tensor = Tensor::from_array(input_array)?;
         let outputs = session.run(ort::inputs![input_tensor])?;
         let matte = outputs[0].try_extract_array::<f32>()?;
         extract_matte_hw(matte)
